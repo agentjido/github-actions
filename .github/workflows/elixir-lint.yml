@@ -1,5 +1,5 @@
 # Reusable Elixir Lint Workflow
-# Usage: uses: jmanhype/github-actions/.github/workflows/elixir-lint.yml@v1
+# Usage: uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v1
 # (Transfer to agentjido/github-actions when permissions available)
 
 name: Elixir Lint

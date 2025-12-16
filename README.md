@@ -2,7 +2,7 @@
 
 Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem repositories.
 
-> **Note**: This repository is temporarily hosted at `jmanhype/github-actions`. It will be transferred to `agentjido/github-actions` once permissions are available. Update workflow references accordingly after transfer.
+> **Note**: This repository is temporarily hosted at `agentjido/github-actions`. It will be transferred to `agentjido/github-actions` once permissions are available. Update workflow references accordingly after transfer.
 
 ## Workflows
 
@@ -33,11 +33,11 @@ permissions:
 jobs:
   lint:
     name: Lint
-    uses: jmanhype/github-actions/.github/workflows/elixir-lint.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v1
 
   test:
     name: Test
-    uses: jmanhype/github-actions/.github/workflows/elixir-test.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v1
 ```
 
 ### With PostgreSQL
@@ -46,7 +46,7 @@ jobs:
 jobs:
   test:
     name: Test
-    uses: jmanhype/github-actions/.github/workflows/elixir-test.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v1
     with:
       postgres: true
 ```
@@ -67,7 +67,7 @@ permissions:
 jobs:
   release:
     name: Release
-    uses: jmanhype/github-actions/.github/workflows/elixir-release.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v1
     secrets: inherit
 ```
 
@@ -112,10 +112,10 @@ jobs:
 
 ```yaml
 # Recommended: Get compatible updates
-uses: jmanhype/github-actions/.github/workflows/elixir-lint.yml@v1
+uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v1
 
 # Exact version pinning
-uses: jmanhype/github-actions/.github/workflows/elixir-lint.yml@v1.0.0
+uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v1.0.0
 ```
 
 ## Prerequisites

@@ -1,5 +1,5 @@
 # Reusable Elixir Release Workflow
-# Usage: uses: jmanhype/github-actions/.github/workflows/elixir-release.yml@v1
+# Usage: uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v1
 # (Transfer to agentjido/github-actions when permissions available)
 #
 # Requires: secrets: inherit in caller workflow
