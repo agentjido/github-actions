@@ -17,7 +17,7 @@ on:
         description: 'Elixir version'
         required: false
         type: string
-        default: '1.18'
+        default: '1.19'
       mix_env:
         description: 'MIX_ENV for compilation'
         required: false
