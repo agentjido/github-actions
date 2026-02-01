@@ -118,23 +118,22 @@ jobs:
         id: release
         run: |
           set -euo pipefail
-          OUTPUT=$(${{ inputs.release_command }} 2>&1) || {
-            if echo "$OUTPUT" | grep -qE "(No changes since|No changes should result)"; then
-              echo "No releasable commits found since last release"
-              echo "skipped=true" >> $GITHUB_OUTPUT
-              echo "### Skipped: No releasable commits" >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "$OUTPUT"
-            exit 1
-          }
-          echo "$OUTPUT"
+          # Check for releasable commits first (dry-run to detect "no changes")
+          if ${{ inputs.release_command }} --dry-run 2>&1 | grep -qE "(No changes since|No changes should result)"; then
+            echo "No releasable commits found since last release"
+            echo "skipped=true" >> $GITHUB_OUTPUT
+            echo "### Skipped: No releasable commits" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
-          # Extract version from output
-          VERSION=$(echo "$OUTPUT" | grep -oP 'v\d+\.\d+\.\d+' | head -1)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # Run the actual release (no output capture to avoid exit code issues)
+          ${{ inputs.release_command }}
+
+          # Extract version from mix.exs after release
+          VERSION=$(grep -oP '@version "\K[^"]+' mix.exs)
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
           echo "skipped=false" >> $GITHUB_OUTPUT
-          echo "### Version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Version: v$VERSION" >> "$GITHUB_STEP_SUMMARY"
         env:
           MIX_ENV: ${{ inputs.mix_env }}
 
