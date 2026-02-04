@@ -61,7 +61,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ github.token }}
 
       - name: Disable git hooks
         run: git config core.hooksPath /dev/null
@@ -83,8 +83,21 @@ jobs:
           otp-version: ${{ inputs.otp_version }}
           elixir-version: ${{ inputs.elixir_version }}
 
-      - name: Reinstall Hex for OTP compatibility
-        run: mix local.hex --force
+      - name: Install Hex/Rebar
+        run: |
+          set -euo pipefail
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Restore Hex/Mix cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.hex
+            ~/.mix
+          key: ${{ runner.os }}-beamtools-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-beamtools-
 
       - name: Restore dependencies cache
         uses: actions/cache@v4
@@ -93,12 +106,14 @@ jobs:
           path: |
             deps
             _build
-            ~/.mix
-            ~/.hex
-          key: ${{ runner.os }}-mix-release-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-mix-release-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-
-            ${{ runner.os }}-mix-release-
+          key: ${{ runner.os }}-mix-${{ inputs.mix_env }}-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-${{ hashFiles('mix.lock') }}
+
+      - name: Remove cached rebar3 build artifacts in deps
+        run: |
+          if [ -d deps ]; then
+            find deps -maxdepth 6 -type d \( -name _build -o -name .rebar3 \) -prune -exec rm -rf {} + || true
+            find deps -maxdepth 6 -type f -name rebar3.crashdump -delete || true
+          fi
 
       - name: Install dependencies
         run: |
@@ -130,10 +145,10 @@ jobs:
           ${{ inputs.release_command }}
 
           # Extract version from mix.exs after release
-          VERSION=$(grep -oP '@version "\K[^"]+' mix.exs)
-          echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          VERSION="v$(mix run -e 'IO.puts(Mix.Project.config()[:version])')"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "skipped=false" >> $GITHUB_OUTPUT
-          echo "### Version: v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
         env:
           MIX_ENV: ${{ inputs.mix_env }}
 
@@ -164,7 +179,7 @@ jobs:
       - name: Create GitHub release
         if: steps.release.outputs.skipped != 'true' && inputs.dry_run != true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.release.outputs.version }}"
