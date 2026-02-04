@@ -144,8 +144,8 @@ jobs:
           # Run the actual release (no output capture to avoid exit code issues)
           ${{ inputs.release_command }}
 
-          # Extract version from mix.exs after release
-          VERSION="v$(mix run -e 'IO.puts(Mix.Project.config()[:version])')"
+          # Extract version from mix.exs after release (suppress compilation output)
+          VERSION="v$(mix run --no-compile -e 'IO.puts(Mix.Project.config()[:version])')"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "skipped=false" >> $GITHUB_OUTPUT
           echo "### Version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
