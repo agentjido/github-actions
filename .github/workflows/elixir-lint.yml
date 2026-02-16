@@ -134,3 +134,12 @@ jobs:
         run: ${{ inputs.lint_command }}
         env:
           MIX_ENV: ${{ inputs.mix_env }}
+
+      - name: Audit Hex dependencies
+        run: mix hex.audit
+
+      - name: Validate Hex package (dry run)
+        if: github.event_name == 'pull_request'
+        run: mix hex.publish --dry-run
+        env:
+          MIX_ENV: dev
