@@ -104,8 +104,11 @@ jobs:
             deps
             _build
           key: ${{ runner.os }}-mix-${{ inputs.mix_env }}-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ inputs.mix_env }}-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-
 
       - name: Remove cached rebar3 build artifacts in deps
+        if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           if [ -d deps ]; then
             find deps -maxdepth 6 -type d \( -name _build -o -name .rebar3 \) -prune -exec rm -rf {} + || true
@@ -116,6 +119,7 @@ jobs:
         run: mix deps.get
 
       - name: Compile dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true'
         run: mix deps.compile
         env:
           MIX_ENV: ${{ inputs.mix_env }}
@@ -129,6 +133,8 @@ jobs:
         with:
           path: priv/plts
           key: ${{ runner.os }}-plt-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-${{ hashFiles('mix.lock', 'mix.exs') }}
+          restore-keys: |
+            ${{ runner.os }}-plt-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-
 
       - name: Run lint checks
         run: ${{ inputs.lint_command }}
