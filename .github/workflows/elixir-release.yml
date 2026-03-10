@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: 'mix git_ops.release --yes'
+      version_override:
+        description: 'Optional explicit bare SemVer override for git_ops.release (for example 1.2.3, not v1.2.3)'
+        required: false
+        type: string
+        default: ''
       dry_run:
         description: 'Dry run (no git push, no tag, no GitHub release, no Hex publish)'
         required: false
@@ -51,6 +56,9 @@ jobs:
     name: Release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    concurrency:
+      group: release-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
 
     permissions:
       contents: write
@@ -133,16 +141,57 @@ jobs:
         id: release
         run: |
           set -euo pipefail
+
+          run_release() {
+            local escaped_args=""
+
+            if [ "$#" -gt 0 ]; then
+              printf -v escaped_args '%q ' "$@"
+            fi
+
+            bash -lc "${{ inputs.release_command }} ${escaped_args}"
+          }
+
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            echo "Using explicit version override: $VERSION_OVERRIDE"
+          fi
+
+          DRY_RUN_LOG=$(mktemp)
+          trap 'rm -f "$DRY_RUN_LOG"' EXIT
+
+          # Capture the dry-run output so we can inspect it without pipefail masking matches.
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            if run_release --override "$VERSION_OVERRIDE" --dry-run >"$DRY_RUN_LOG" 2>&1; then
+              DRY_RUN_STATUS=0
+            else
+              DRY_RUN_STATUS=$?
+            fi
+          elif run_release --dry-run >"$DRY_RUN_LOG" 2>&1; then
+            DRY_RUN_STATUS=0
+          else
+            DRY_RUN_STATUS=$?
+          fi
+
+          cat "$DRY_RUN_LOG"
+
           # Check for releasable commits first (dry-run to detect "no changes")
-          if ${{ inputs.release_command }} --dry-run 2>&1 | grep -qE "(No changes since|No changes should result)"; then
+          if [ -z "$VERSION_OVERRIDE" ] && grep -qE "(No changes since|No changes should result)" "$DRY_RUN_LOG"; then
             echo "No releasable commits found since last release"
             echo "skipped=true" >> $GITHUB_OUTPUT
             echo "### Skipped: No releasable commits" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
+          if [ "$DRY_RUN_STATUS" -ne 0 ]; then
+            exit "$DRY_RUN_STATUS"
+          fi
+
           # Run the actual release (no output capture to avoid exit code issues)
-          ${{ inputs.release_command }}
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            run_release --override "$VERSION_OVERRIDE"
+          else
+            run_release
+          fi
 
           # Extract version from mix.exs after release (grep to avoid mix compilation output)
           VERSION="v$(grep -m1 '@version "' mix.exs | sed 's/.*"\(.*\)".*/\1/' || grep -m1 'version:' mix.exs | sed 's/.*"\(.*\)".*/\1/')"
@@ -151,15 +200,7 @@ jobs:
           echo "### Version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
         env:
           MIX_ENV: ${{ inputs.mix_env }}
-
-      - name: Push changes and tags
-        if: steps.release.outputs.skipped != 'true' && inputs.dry_run != true
-        run: |
-          set -euo pipefail
-          git push origin HEAD
-          git push origin --tags
-          echo "Released version ${{ steps.release.outputs.version }}"
-          echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
 
       - name: Publish to Hex.pm
         if: steps.release.outputs.skipped != 'true'
@@ -175,6 +216,15 @@ jobs:
             echo "### Published to Hex.pm" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "- Version: ${{ steps.release.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push changes and tags
+        if: steps.release.outputs.skipped != 'true' && inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release.outputs.version }}"
+          git push --atomic origin HEAD "refs/tags/$VERSION"
+          echo "Released version $VERSION"
+          echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Create GitHub release
         if: steps.release.outputs.skipped != 'true' && inputs.dry_run != true

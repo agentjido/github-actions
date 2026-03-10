@@ -69,6 +69,9 @@ jobs:
     name: Release
     uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v1
     secrets: inherit
+    with:
+      # Optional: bypass commit-derived versioning and force an exact bare SemVer version
+      version_override: 1.2.3
 ```
 
 ## Workflow Inputs
@@ -99,11 +102,14 @@ jobs:
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `otp_version` | string | - | OTP version (if no .tool-versions) |
-| `elixir_version` | string | - | Elixir version (if no .tool-versions) |
-| `version_file` | string | `.tool-versions` | Path to version file |
+| `otp_version` | string | `28` | OTP version |
+| `elixir_version` | string | `1.18` | Elixir version |
 | `mix_env` | string | `dev` | MIX_ENV for release |
 | `release_command` | string | `mix git_ops.release --yes` | Release command |
+| `version_override` | string | `''` | Optional explicit bare SemVer override passed to `mix git_ops.release --override` |
+| `dry_run` | boolean | `false` | Run the release flow without push, GitHub release, or Hex publish |
+| `hex_dry_run` | boolean | `false` | Perform a Hex dry run while still running the git release steps |
+| `skip_tests` | boolean | `false` | Skip `mix test` before releasing |
 
 ## Version Pinning
 
