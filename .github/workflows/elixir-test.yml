@@ -101,21 +101,21 @@ jobs:
           otp-version: ${{ matrix.otp }}
           elixir-version: ${{ matrix.elixir }}
 
-      - name: Install Hex/Rebar
-        run: |
-          set -euo pipefail
-          mix local.hex --force
-          mix local.rebar --force
-
       - name: Restore Hex/Mix cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.hex
             ~/.mix
-          key: ${{ runner.os }}-beamtools-${{ hashFiles('mix.lock') }}
+          key: ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-beamtools-
+            ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      - name: Install Hex/Rebar
+        run: |
+          set -euo pipefail
+          mix local.hex --force
+          mix local.rebar --force
 
       - name: Restore dependencies cache
         uses: actions/cache@v4

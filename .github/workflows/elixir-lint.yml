@@ -80,21 +80,21 @@ jobs:
           otp-version: ${{ inputs.otp_version }}
           elixir-version: ${{ inputs.elixir_version }}
 
-      - name: Install Hex/Rebar
-        run: |
-          set -euo pipefail
-          mix local.hex --force
-          mix local.rebar --force
-
       - name: Restore Hex/Mix cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.hex
             ~/.mix
-          key: ${{ runner.os }}-beamtools-${{ hashFiles('mix.lock') }}
+          key: ${{ runner.os }}-beamtools-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-beamtools-
+            ${{ runner.os }}-beamtools-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-
+
+      - name: Install Hex/Rebar
+        run: |
+          set -euo pipefail
+          mix local.hex --force
+          mix local.rebar --force
 
       - name: Restore dependencies cache
         uses: actions/cache@v4
