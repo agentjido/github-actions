@@ -56,7 +56,7 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.otp }} / ${{ matrix.elixir }}
+    name: ${{ matrix.otp }} - ${{ matrix.elixir }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -171,7 +171,7 @@ jobs:
         run: docker stop postgres && docker rm postgres || true
 
   experimental-compile:
-    name: ${{ inputs.experimental_compile_otp_name != '' && inputs.experimental_compile_otp_name || matrix.otp }} / ${{ matrix.elixir }} (experimental compile)
+    name: ${{ inputs.experimental_compile_otp_name != '' && inputs.experimental_compile_otp_name || matrix.otp }} - ${{ matrix.elixir }} (experimental compile)
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
