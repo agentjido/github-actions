@@ -79,7 +79,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Start PostgreSQL
         if: ${{ inputs.postgres }}
@@ -117,7 +117,7 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
 
       - name: Restore Hex/Mix cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.hex
@@ -133,7 +133,7 @@ jobs:
           mix local.rebar --force
 
       - name: Restore dependencies cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: deps-cache
         with:
           path: |
@@ -191,7 +191,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
@@ -201,7 +201,7 @@ jobs:
           version-type: strict
 
       - name: Restore Hex/Mix cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.hex
@@ -217,7 +217,7 @@ jobs:
           mix local.rebar --force
 
       - name: Restore dependencies cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: deps-cache
         with:
           path: |

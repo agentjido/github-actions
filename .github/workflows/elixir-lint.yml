@@ -72,7 +72,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
@@ -81,7 +81,7 @@ jobs:
           elixir-version: ${{ inputs.elixir_version }}
 
       - name: Restore Hex/Mix cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.hex
@@ -97,7 +97,7 @@ jobs:
           mix local.rebar --force
 
       - name: Restore dependencies cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: deps-cache
         with:
           path: |
@@ -128,7 +128,7 @@ jobs:
         run: mkdir -p priv/plts
 
       - name: Restore Dialyzer PLT cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: plt-cache
         with:
           path: priv/plts
