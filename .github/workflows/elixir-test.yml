@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: ''
+      experimental_compile_otp_name:
+        description: 'Optional display label for experimental compile OTP versions; defaults to the exact OTP version'
+        required: false
+        type: string
+        default: ''
       mix_env:
         description: 'MIX_ENV for tests'
         required: false
@@ -51,7 +56,7 @@ on:
 
 jobs:
   test:
-    name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}
+    name: ${{ matrix.otp }} / ${{ matrix.elixir }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -166,7 +171,7 @@ jobs:
         run: docker stop postgres && docker rm postgres || true
 
   experimental-compile:
-    name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }} (experimental compile)
+    name: ${{ inputs.experimental_compile_otp_name != '' && inputs.experimental_compile_otp_name || matrix.otp }} / ${{ matrix.elixir }} (experimental compile)
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
