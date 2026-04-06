@@ -236,7 +236,23 @@ jobs:
         run: mix deps.get
 
       - name: Compile dependencies
-        run: mix deps.compile
+        run: |
+          set -euo pipefail
+          COMPILE_LOG=$(mktemp)
+          trap 'rm -f "$COMPILE_LOG"' EXIT
+
+          compile_status=0
+          mix deps.compile 2>&1 | tee "$COMPILE_LOG" || compile_status=$?
+
+          if [ "$compile_status" -ne 0 ]; then
+            exit "$compile_status"
+          fi
+
+          if grep -Eq '(^warning:| warning: )' "$COMPILE_LOG"; then
+            echo "### Experimental compile warnings" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Dependency compilation emitted warnings and was treated as a failure." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Compile project
         run: mix compile --warnings-as-errors

@@ -33,11 +33,11 @@ permissions:
 jobs:
   lint:
     name: Lint
-    uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3
 
   test:
     name: Test
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v3
 ```
 
 ### With PostgreSQL
@@ -46,7 +46,7 @@ jobs:
 jobs:
   test:
     name: Test
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v3
     with:
       postgres: true
 ```
@@ -67,7 +67,7 @@ permissions:
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v1
+    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v3
     secrets: inherit
     with:
       # Optional: bypass commit-derived versioning and force an exact bare SemVer version
@@ -113,15 +113,15 @@ jobs:
 
 ## Version Pinning
 
-- **`@v1`**: Recommended for most users. Automatically receives compatible updates.
-- **`@v1.0.0`**: Pin to exact version for maximum stability.
+- **`@v3`**: Recommended for most users. Automatically receives compatible updates.
+- **`@v3.1.0`**: Pin to exact version for maximum stability.
 
 ```yaml
 # Recommended: Get compatible updates
-uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v1
+uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3
 
 # Exact version pinning
-uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v1.0.0
+uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3.1.0
 ```
 
 ## Prerequisites
