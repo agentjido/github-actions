@@ -19,7 +19,7 @@ on:
         type: string
         default: '["1.18", "1.19"]'
       experimental_compile_elixir_versions:
-        description: 'JSON array of optional compile-only Elixir versions that are allowed to fail'
+        description: 'JSON array of optional exact compile-only Elixir versions that are allowed to fail'
         required: false
         type: string
         default: '[]'
@@ -51,7 +51,7 @@ on:
 
 jobs:
   test:
-    name: Elixir ${{ matrix.elixir }}
+    name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -166,7 +166,7 @@ jobs:
         run: docker stop postgres && docker rm postgres || true
 
   experimental-compile:
-    name: Experimental Compile Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
+    name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }} (experimental compile)
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -193,6 +193,7 @@ jobs:
         with:
           otp-version: ${{ matrix.otp }}
           elixir-version: ${{ matrix.elixir }}
+          version-type: strict
 
       - name: Restore Hex/Mix cache
         uses: actions/cache@v4
