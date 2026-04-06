@@ -18,6 +18,16 @@ on:
         required: false
         type: string
         default: '["1.18", "1.19"]'
+      experimental_compile_elixir_versions:
+        description: 'JSON array of optional compile-only Elixir versions that are allowed to fail'
+        required: false
+        type: string
+        default: '[]'
+      experimental_compile_otp_versions:
+        description: 'Optional JSON array of OTP versions for experimental compile-only checks; defaults to otp_versions'
+        required: false
+        type: string
+        default: ''
       mix_env:
         description: 'MIX_ENV for tests'
         required: false
@@ -154,3 +164,81 @@ jobs:
       - name: Cleanup PostgreSQL
         if: ${{ inputs.postgres && always() }}
         run: docker stop postgres && docker rm postgres || true
+
+  experimental-compile:
+    name: Experimental Compile Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
+    if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        otp: ${{ fromJson(inputs.experimental_compile_otp_versions != '' && inputs.experimental_compile_otp_versions || inputs.otp_versions) }}
+        elixir: ${{ fromJson(inputs.experimental_compile_elixir_versions) }}
+
+    env:
+      MIX_ENV: ${{ inputs.mix_env }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+
+      - name: Restore Hex/Mix cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.hex
+            ~/.mix
+          key: ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      - name: Install Hex/Rebar
+        run: |
+          set -euo pipefail
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        id: deps-cache
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ inputs.mix_env }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
+
+      - name: Remove cached rebar3 build artifacts in deps
+        run: |
+          if [ -d deps ]; then
+            find deps -maxdepth 6 -type d \( -name _build -o -name .rebar3 \) -prune -exec rm -rf {} + || true
+            find deps -maxdepth 6 -type f -name rebar3.crashdump -delete || true
+          fi
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile dependencies
+        run: mix deps.compile
+
+      - name: Compile project
+        run: mix compile --warnings-as-errors
+
+      - name: Experimental compile summary
+        if: always()
+        run: |
+          echo "### Experimental compile lane" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Elixir: ${{ matrix.elixir }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- OTP: ${{ matrix.otp }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Blocking: no (job uses continue-on-error)" >> "$GITHUB_STEP_SUMMARY"
