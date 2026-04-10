@@ -171,7 +171,8 @@ jobs:
         run: docker stop postgres && docker rm postgres || true
 
   experimental-compile:
-    name: ${{ inputs.experimental_compile_otp_name != '' && inputs.experimental_compile_otp_name || matrix.otp }} - ${{ matrix.elixir }} (experimental compile)
+    # GitHub check rendering misformats conditional fallback expressions in reusable workflow job names.
+    name: ${{ matrix.otp }} - ${{ matrix.elixir }} (experimental compile)
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -243,8 +244,13 @@ jobs:
 
       - name: Experimental compile summary
         if: always()
+        env:
+          EXPERIMENTAL_COMPILE_OTP_NAME: ${{ inputs.experimental_compile_otp_name }}
         run: |
           echo "### Experimental compile lane" >> "$GITHUB_STEP_SUMMARY"
           echo "- Elixir: ${{ matrix.elixir }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- OTP: ${{ matrix.otp }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$EXPERIMENTAL_COMPILE_OTP_NAME" ]; then
+            echo "- OTP label: $EXPERIMENTAL_COMPILE_OTP_NAME" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "- Blocking: no (job uses continue-on-error)" >> "$GITHUB_STEP_SUMMARY"
