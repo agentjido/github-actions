@@ -113,16 +113,40 @@ jobs:
 
 ## Version Pinning
 
-- **`@v3`**: Recommended for most users. Automatically receives compatible updates.
-- **`@v3.1.0`**: Pin to exact version for maximum stability.
+- **`@v3`**: Recommended for most users. This is the floating v3 compatibility channel and receives backward-compatible updates.
+- **`@v3.1.3`**: Pin to an exact release for maximum stability and reproducibility.
+- **`@main`**: Not recommended for production consumers because it is not a stable release ref.
 
 ```yaml
 # Recommended: Get compatible updates
 uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3
 
 # Exact version pinning
-uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3.1.0
+uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3.1.3
 ```
+
+These refs are git refs on this repository, so they version the entire workflow repo rather than an individual workflow file.
+
+## Maintainer Release Contract
+
+- Publish a new exact `vX.Y.Z` tag for every downstream-facing workflow change.
+- Treat published exact tags as immutable.
+- Move the floating major tag only after the exact release tag exists and the release is confirmed backward compatible.
+- Cut a new major instead of moving the current one if a change would break existing `@vX` consumers.
+- Keep `README.md` and `AGENTS.md` aligned whenever release guidance changes.
+
+### Maintainer Release Checklist
+
+1. Validate the change in at least one consumer repo using a branch ref, exact tag candidate, or commit SHA.
+2. Merge the change to `main`.
+3. Create an annotated release tag on the release commit:
+   `git tag -a vX.Y.Z -m "vX.Y.Z"`
+4. Push the exact release tag:
+   `git push origin vX.Y.Z`
+5. If the release is backward compatible, advance the floating major tag to the same commit:
+   `git tag -f vX <release-commit>`
+   `git push origin refs/tags/vX --force`
+6. If the release is breaking, leave the old major tag in place and publish a new major line.
 
 ## Prerequisites
 
@@ -193,7 +217,8 @@ This workflow repository serves the following Jido ecosystem repos:
 2. Create a feature branch
 3. Make changes to workflow files
 4. Test in a consumer repository
-5. Submit a pull request
+5. If the change affects downstream consumers, follow the maintainer release contract above
+6. Submit a pull request
 
 ## License
 
