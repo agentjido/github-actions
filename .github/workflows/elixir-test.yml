@@ -63,6 +63,19 @@ on:
         required: false
         type: string
         default: ''
+      workflow_platform_repository:
+        description: 'Internal workflow platform repository'
+        required: true
+        type: string
+      workflow_platform_ref:
+        description: 'Internal workflow platform ref'
+        required: true
+        type: string
+      workflow_platform_path:
+        description: 'Checkout path for the internal workflow platform'
+        required: false
+        type: string
+        default: '.github-actions-platform'
 
 jobs:
   test:
@@ -107,30 +120,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Resolve workflow platform ref
-        id: platform-ref
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
-          workflow_path="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].path // empty')"
-          workflow_ref="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].ref // empty')"
-          workflow_sha="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].sha // empty')"
-          if [ -z "$workflow_path" ]; then
-            echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
-            exit 1
-          fi
-          echo "repository=${workflow_path%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
-          echo "ref=${workflow_ref:-$workflow_sha}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout workflow platform
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ steps.platform-ref.outputs.repository }}
-          ref: ${{ steps.platform-ref.outputs.ref }}
-          path: .github-actions-platform
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
 
       - name: Setup Elixir
         uses: ./.github-actions-platform/.github/actions/setup-beam
@@ -204,30 +199,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Resolve workflow platform ref
-        id: platform-ref
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
-          workflow_path="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].path // empty')"
-          workflow_ref="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].ref // empty')"
-          workflow_sha="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].sha // empty')"
-          if [ -z "$workflow_path" ]; then
-            echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
-            exit 1
-          fi
-          echo "repository=${workflow_path%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
-          echo "ref=${workflow_ref:-$workflow_sha}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout workflow platform
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ steps.platform-ref.outputs.repository }}
-          ref: ${{ steps.platform-ref.outputs.ref }}
-          path: .github-actions-platform
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
 
       - name: Setup Elixir
         uses: ./.github-actions-platform/.github/actions/setup-beam

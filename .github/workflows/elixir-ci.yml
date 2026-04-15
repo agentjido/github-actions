@@ -150,8 +150,37 @@ on:
         default: "pull-request"
 
 jobs:
+  resolve-platform:
+    name: Resolve Platform
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      repository: ${{ steps.platform.outputs.repository }}
+      ref: ${{ steps.platform.outputs.ref }}
+      path: ${{ steps.platform.outputs.path }}
+    steps:
+      - name: Resolve workflow platform ref
+        id: platform
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow_path="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '.referenced_workflows[0].path // empty')"
+          workflow_ref="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '.referenced_workflows[0].ref // empty')"
+          workflow_sha="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '.referenced_workflows[0].sha // empty')"
+          if [ -z "$workflow_path" ]; then
+            echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
+            exit 1
+          fi
+          echo "repository=${workflow_path%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${workflow_ref:-$workflow_sha}" >> "$GITHUB_OUTPUT"
+          echo "path=.github-actions-platform" >> "$GITHUB_OUTPUT"
+
   quality:
     name: Quality
+    needs: resolve-platform
     uses: ./.github/workflows/elixir-quality.yml
     permissions:
       contents: read
@@ -170,10 +199,15 @@ jobs:
       sobelow_command: ${{ inputs.sobelow_command }}
       conventional_commits: ${{ inputs.conventional_commits }}
       conventional_commit_command: ${{ inputs.conventional_commit_command }}
+      workflow_platform_repository: ${{ needs.resolve-platform.outputs.repository }}
+      workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
+      workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
 
   test:
     name: Test
-    needs: quality
+    needs:
+      - resolve-platform
+      - quality
     uses: ./.github/workflows/elixir-test.yml
     permissions:
       contents: read
@@ -189,10 +223,14 @@ jobs:
       postgres_image: ${{ inputs.postgres_image }}
       db_setup_command: ${{ inputs.db_setup_command }}
       database_url: ${{ inputs.database_url }}
+      workflow_platform_repository: ${{ needs.resolve-platform.outputs.repository }}
+      workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
+      workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
 
   writeback:
     name: Write-Back
     needs:
+      - resolve-platform
       - quality
       - test
     if: ${{ inputs.writeback && inputs.writeback_command != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -220,30 +258,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.WRITEBACK_TOKEN != '' && secrets.WRITEBACK_TOKEN || github.token }}
 
-      - name: Resolve workflow platform ref
-        id: platform-ref
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
-          workflow_path="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].path // empty')"
-          workflow_ref="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].ref // empty')"
-          workflow_sha="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].sha // empty')"
-          if [ -z "$workflow_path" ]; then
-            echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
-            exit 1
-          fi
-          echo "repository=${workflow_path%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
-          echo "ref=${workflow_ref:-$workflow_sha}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout workflow platform
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ steps.platform-ref.outputs.repository }}
-          ref: ${{ steps.platform-ref.outputs.ref }}
-          path: .github-actions-platform
+          repository: ${{ needs.resolve-platform.outputs.repository }}
+          ref: ${{ needs.resolve-platform.outputs.ref }}
+          path: ${{ needs.resolve-platform.outputs.path }}
 
       - name: Setup Beam
         uses: ./.github-actions-platform/.github/actions/setup-beam
@@ -344,6 +364,7 @@ jobs:
     name: Summary
     if: always()
     needs:
+      - resolve-platform
       - quality
       - test
       - writeback

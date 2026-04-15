@@ -41,6 +41,10 @@ Goal:
 
 - settle the public API before writing implementation
 
+Status:
+
+- frozen in [V4_API.md](/Users/mhostetler/Source/OrigJido/github-actions/V4_API.md:1)
+
 Tasks:
 
 1. Finalize the public workflow names:
@@ -49,7 +53,8 @@ Tasks:
 2. Finalize v4 public inputs for CI:
    - `otp_versions`
    - `elixir_versions`
-   - `mix_env`
+   - `quality_mix_env`
+   - `test_mix_env`
    - `postgres`
    - `postgres_image`
    - `db_setup_command`
@@ -59,7 +64,7 @@ Tasks:
    - `writeback_paths`
    - `writeback_commit_message`
    - `writeback_branch_mode`
-   - optional `docs`, `sobelow`, `conventional_commits`, `hex_publish_dry_run`
+   - optional `docs`, `sobelow`, `conventional_commits`, `validate_hex_package`
 3. Finalize v4 public inputs for release:
    - `otp_version`
    - `elixir_version`

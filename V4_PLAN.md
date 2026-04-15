@@ -48,11 +48,14 @@ For this repo, the main adaptation is:
 
 ## V4 Public Workflow API
 
+The frozen public input contract lives in [V4_API.md](/Users/mhostetler/Source/OrigJido/github-actions/V4_API.md:1).
+
 V4 should publish three consumer-facing workflows.
 
 ### 1. `elixir-ci.yml`
 
-This is the recommended default entrypoint for nearly every Jido repo.
+This is the recommended default entrypoint for nearly every Jido repo and the
+main public API surface for CI.
 
 It should orchestrate:
 
@@ -92,8 +95,8 @@ This workflow must support two operating modes:
 
 ### 2. `elixir-release.yml`
 
-This stays separate from CI because release permissions, secrets, and approval controls are
-different.
+This stays separate from CI because release permissions, secrets, and approval
+controls are different.
 
 Consumer repos should usually only need:
 
@@ -116,8 +119,8 @@ jobs:
 
 This should be added in a later phase, not required for initial v4 adoption.
 
-CLA handling has a different event and security model than normal CI, so it should remain a
-separate workflow.
+CLA handling has a different event and security model than normal CI, so it
+should remain a separate workflow.
 
 Consumer repos should eventually be able to use:
 
@@ -165,6 +168,7 @@ Notes:
 - composite actions should own repeated setup logic
 - reusable workflows should own job topology, permissions, services, matrices, and summaries
 - service containers should stay in workflows, not composite actions
+- only `elixir-ci.yml` and `elixir-release.yml` should be documented as stable public entrypoints
 - write-back logic should live in a dedicated reusable workflow or dedicated job block, not mixed
   invisibly into the normal read-only validation path
 
