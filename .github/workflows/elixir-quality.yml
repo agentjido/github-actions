@@ -74,16 +74,20 @@ jobs:
     if: ${{ inputs.changelog_guard && github.event_name == 'pull_request' }}
     permissions:
       contents: read
-      pull-requests: read
     steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
       - name: Check for CHANGELOG.md modifications
         env:
-          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         shell: bash
         run: |
           set -euo pipefail
-          files="$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename')"
-          if echo "$files" | grep -qE '^CHANGELOG\.md$'; then
+          git fetch --no-tags --depth=1 origin "${BASE_REF}"
+          if git diff --name-only "FETCH_HEAD...HEAD" | grep -qx 'CHANGELOG.md'; then
             echo "::error::CHANGELOG.md should not be edited manually because git_ops generates it during releases."
             exit 1
           fi

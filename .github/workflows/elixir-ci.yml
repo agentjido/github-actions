@@ -155,7 +155,6 @@ jobs:
     uses: ./.github/workflows/elixir-quality.yml
     permissions:
       contents: read
-      pull-requests: read
     secrets:
       HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
     with:
@@ -202,9 +201,6 @@ jobs:
     concurrency:
       group: writeback-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - name: Validate write-back mode
         shell: bash
