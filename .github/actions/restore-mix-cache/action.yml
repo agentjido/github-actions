@@ -1,0 +1,74 @@
+name: Restore Mix Cache
+description: Restore Beam tool, dependency, build, and optional PLT caches.
+
+inputs:
+  otp-version:
+    description: OTP version used in the cache key
+    required: true
+  elixir-version:
+    description: Elixir version used in the cache key
+    required: true
+  mix-env:
+    description: MIX_ENV used in the dependency cache key
+    required: false
+    default: test
+  restore-deps:
+    description: Whether to restore deps and _build cache
+    required: false
+    default: "true"
+  restore-plt:
+    description: Whether to restore Dialyzer PLT cache
+    required: false
+    default: "false"
+  plt-path:
+    description: Path to the PLT cache directory
+    required: false
+    default: priv/plts
+
+outputs:
+  deps-cache-hit:
+    description: Whether the deps/_build cache was restored
+    value: ${{ steps.deps-cache.outputs.cache-hit }}
+  plt-cache-hit:
+    description: Whether the PLT cache was restored
+    value: ${{ steps.plt-cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Hex and Mix cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          ~/.hex
+          ~/.mix
+        key: ${{ runner.os }}-beamtools-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-${{ hashFiles('mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-beamtools-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-
+
+    - name: Restore deps and build cache
+      if: ${{ inputs.restore-deps == 'true' }}
+      id: deps-cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ inputs.mix-env }}-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-${{ hashFiles('mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-mix-${{ inputs.mix-env }}-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-
+
+    - name: Create PLT directory
+      if: ${{ inputs.restore-plt == 'true' }}
+      shell: bash
+      run: mkdir -p "${{ inputs.plt-path }}"
+
+    - name: Restore PLT cache
+      if: ${{ inputs.restore-plt == 'true' }}
+      id: plt-cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ inputs.plt-path }}
+        key: ${{ runner.os }}-plt-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-${{ hashFiles('mix.lock', 'mix.exs') }}
+        restore-keys: |
+          ${{ runner.os }}-plt-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-

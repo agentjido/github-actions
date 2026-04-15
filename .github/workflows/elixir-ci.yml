@@ -1,0 +1,363 @@
+name: Elixir CI
+
+on:
+  workflow_call:
+    secrets:
+      HEX_API_KEY:
+        required: false
+      WRITEBACK_TOKEN:
+        required: false
+    inputs:
+      quality_otp_version:
+        description: OTP version for the quality lane
+        required: false
+        type: string
+        default: "28"
+      quality_elixir_version:
+        description: Elixir version for the quality lane
+        required: false
+        type: string
+        default: "1.19"
+      quality_mix_env:
+        description: MIX_ENV for the quality lane
+        required: false
+        type: string
+        default: "dev"
+      otp_versions:
+        description: JSON array of OTP versions for the test matrix
+        required: false
+        type: string
+        default: '["27", "28"]'
+      elixir_versions:
+        description: JSON array of Elixir versions for the test matrix
+        required: false
+        type: string
+        default: '["1.18", "1.19"]'
+      experimental_compile_elixir_versions:
+        description: JSON array of exact compile-only Elixir versions allowed to fail
+        required: false
+        type: string
+        default: "[]"
+      experimental_compile_otp_versions:
+        description: Optional JSON array of OTP versions for experimental compile checks
+        required: false
+        type: string
+        default: ""
+      experimental_compile_otp_name:
+        description: Optional label for experimental compile OTP versions
+        required: false
+        type: string
+        default: ""
+      test_mix_env:
+        description: MIX_ENV for the test lane
+        required: false
+        type: string
+        default: "test"
+      test_command:
+        description: Test command
+        required: false
+        type: string
+        default: "mix test"
+      postgres:
+        description: Enable a PostgreSQL service in the test lane
+        required: false
+        type: boolean
+        default: false
+      postgres_image:
+        description: PostgreSQL image for the test lane
+        required: false
+        type: string
+        default: "postgres:16-alpine"
+      db_setup_command:
+        description: Optional command that prepares the database before tests
+        required: false
+        type: string
+        default: "mix ecto.setup"
+      database_url:
+        description: Optional explicit DATABASE_URL for db setup
+        required: false
+        type: string
+        default: ""
+      quality_command:
+        description: Optional full replacement quality command
+        required: false
+        type: string
+        default: ""
+      changelog_guard:
+        description: Block pull requests that modify CHANGELOG.md
+        required: false
+        type: boolean
+        default: true
+      validate_hex_package:
+        description: Run mix hex.publish --dry-run during pull requests
+        required: false
+        type: boolean
+        default: true
+      docs:
+        description: Build docs in the quality lane
+        required: false
+        type: boolean
+        default: false
+      docs_command:
+        description: Documentation build command
+        required: false
+        type: string
+        default: "mix docs"
+      sobelow:
+        description: Run Sobelow in the quality lane
+        required: false
+        type: boolean
+        default: false
+      sobelow_command:
+        description: Sobelow command
+        required: false
+        type: string
+        default: "mix sobelow"
+      conventional_commits:
+        description: Validate the current commit message with git_ops
+        required: false
+        type: boolean
+        default: false
+      conventional_commit_command:
+        description: Conventional commit validation command
+        required: false
+        type: string
+        default: "mix git_ops.check_message"
+      writeback:
+        description: Enable automated write-back after successful validation
+        required: false
+        type: boolean
+        default: false
+      writeback_command:
+        description: Command that produces repo write-back changes
+        required: false
+        type: string
+        default: ""
+      writeback_paths:
+        description: Space-delimited pathspecs that may be committed by the write-back job
+        required: false
+        type: string
+        default: "."
+      writeback_commit_message:
+        description: Commit message for automated write-back changes
+        required: false
+        type: string
+        default: "ci: apply automated write-back"
+      writeback_branch_mode:
+        description: "Write-back mode: pull-request or direct"
+        required: false
+        type: string
+        default: "pull-request"
+
+jobs:
+  quality:
+    name: Quality
+    uses: ./.github/workflows/elixir-quality.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    secrets:
+      HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+    with:
+      otp_version: ${{ inputs.quality_otp_version }}
+      elixir_version: ${{ inputs.quality_elixir_version }}
+      mix_env: ${{ inputs.quality_mix_env }}
+      quality_command: ${{ inputs.quality_command }}
+      changelog_guard: ${{ inputs.changelog_guard }}
+      validate_hex_package: ${{ inputs.validate_hex_package }}
+      docs: ${{ inputs.docs }}
+      docs_command: ${{ inputs.docs_command }}
+      sobelow: ${{ inputs.sobelow }}
+      sobelow_command: ${{ inputs.sobelow_command }}
+      conventional_commits: ${{ inputs.conventional_commits }}
+      conventional_commit_command: ${{ inputs.conventional_commit_command }}
+
+  test:
+    name: Test
+    needs: quality
+    uses: ./.github/workflows/elixir-test.yml
+    permissions:
+      contents: read
+    with:
+      otp_versions: ${{ inputs.otp_versions }}
+      elixir_versions: ${{ inputs.elixir_versions }}
+      experimental_compile_elixir_versions: ${{ inputs.experimental_compile_elixir_versions }}
+      experimental_compile_otp_versions: ${{ inputs.experimental_compile_otp_versions }}
+      experimental_compile_otp_name: ${{ inputs.experimental_compile_otp_name }}
+      mix_env: ${{ inputs.test_mix_env }}
+      test_command: ${{ inputs.test_command }}
+      postgres: ${{ inputs.postgres }}
+      postgres_image: ${{ inputs.postgres_image }}
+      db_setup_command: ${{ inputs.db_setup_command }}
+      database_url: ${{ inputs.database_url }}
+
+  writeback:
+    name: Write-Back
+    needs:
+      - quality
+      - test
+    if: ${{ inputs.writeback && inputs.writeback_command != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: writeback-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Validate write-back mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.writeback_branch_mode }}" in
+            pull-request|direct) ;;
+            *)
+              echo "::error::Unsupported writeback_branch_mode: ${{ inputs.writeback_branch_mode }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.WRITEBACK_TOKEN != '' && secrets.WRITEBACK_TOKEN || github.token }}
+
+      - name: Resolve workflow platform ref
+        id: platform-ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow_ref='${{ github.workflow_ref }}'
+          echo "repository=${workflow_ref%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${workflow_ref#*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ steps.platform-ref.outputs.repository }}
+          ref: ${{ steps.platform-ref.outputs.ref }}
+          path: .github-actions-platform
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.quality_otp_version }}
+          elixir-version: ${{ inputs.quality_elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.quality_otp_version }}
+          elixir-version: ${{ inputs.quality_elixir_version }}
+          mix-env: ${{ inputs.quality_mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.quality_mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Run write-back command
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.quality_mix_env }}
+        run: |
+          set -euo pipefail
+          ${{ inputs.writeback_command }}
+
+      - name: Detect write-back changes
+        id: changes
+        shell: bash
+        env:
+          WRITEBACK_PATHS: ${{ inputs.writeback_paths }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain --untracked-files=all -- ${WRITEBACK_PATHS})" ]; then
+            echo "has-changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git
+        if: ${{ steps.changes.outputs.has-changes == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create write-back pull request
+        if: ${{ steps.changes.outputs.has-changes == 'true' && inputs.writeback_branch_mode == 'pull-request' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WRITEBACK_TOKEN != '' && secrets.WRITEBACK_TOKEN || github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WRITEBACK_PATHS: ${{ inputs.writeback_paths }}
+          WRITEBACK_COMMIT_MESSAGE: ${{ inputs.writeback_commit_message }}
+        run: |
+          set -euo pipefail
+          branch="automation/writeback-${{ github.run_id }}-${{ github.run_attempt }}"
+          git switch -c "$branch"
+          git add --all -- ${WRITEBACK_PATHS}
+          git commit -m "$WRITEBACK_COMMIT_MESSAGE"
+          git push --set-upstream origin "$branch"
+          gh pr create \
+            --base "$DEFAULT_BRANCH" \
+            --head "$branch" \
+            --title "$WRITEBACK_COMMIT_MESSAGE" \
+            --body "Automated write-back generated by the reusable Elixir CI workflow."
+
+      - name: Push write-back directly
+        if: ${{ steps.changes.outputs.has-changes == 'true' && inputs.writeback_branch_mode == 'direct' }}
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WRITEBACK_PATHS: ${{ inputs.writeback_paths }}
+          WRITEBACK_COMMIT_MESSAGE: ${{ inputs.writeback_commit_message }}
+        run: |
+          set -euo pipefail
+          git add --all -- ${WRITEBACK_PATHS}
+          git commit -m "$WRITEBACK_COMMIT_MESSAGE"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
+
+      - name: Summarize write-back
+        if: always()
+        shell: bash
+        run: |
+          echo "### Write-back" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Enabled: true" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mode: ${{ inputs.writeback_branch_mode }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Changes detected: ${{ steps.changes.outputs.has-changes || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+
+  summary:
+    name: Summary
+    if: always()
+    needs:
+      - quality
+      - test
+      - writeback
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Report CI summary
+        shell: bash
+        run: |
+          {
+            echo "## Elixir CI Summary"
+            echo "- Quality: ${{ needs.quality.result }}"
+            echo "- Test: ${{ needs.test.result }}"
+            echo "- Write-back: ${{ needs.writeback.result }}"
+            echo "- Quality toolchain: OTP ${{ inputs.quality_otp_version }}, Elixir ${{ inputs.quality_elixir_version }}"
+            echo "- Test matrix OTPs: ${{ inputs.otp_versions }}"
+            echo "- Test matrix Elixirs: ${{ inputs.elixir_versions }}"
+            echo "- PostgreSQL: ${{ inputs.postgres }}"
+            echo "- Docs: ${{ inputs.docs }}"
+            echo "- Sobelow: ${{ inputs.sobelow }}"
+          } >> "$GITHUB_STEP_SUMMARY"

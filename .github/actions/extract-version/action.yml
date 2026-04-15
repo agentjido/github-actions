@@ -1,0 +1,38 @@
+name: Extract Elixir Project Version
+description: Read the project version from mix.exs.
+
+inputs:
+  prefix:
+    description: Prefix to prepend to the extracted version
+    required: false
+    default: v
+
+outputs:
+  bare-version:
+    description: Extracted version without prefix
+    value: ${{ steps.extract.outputs.bare-version }}
+  version:
+    description: Extracted version with prefix
+    value: ${{ steps.extract.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Extract version
+      id: extract
+      shell: bash
+      run: |
+        set -euo pipefail
+        bare_version="$(sed -n 's/.*@version "\(.*\)".*/\1/p' mix.exs | head -n1)"
+        if [ -z "$bare_version" ]; then
+          bare_version="$(sed -n 's/.*version:[[:space:]]*"\(.*\)".*/\1/p' mix.exs | head -n1)"
+        fi
+        if [ -z "$bare_version" ]; then
+          echo "::error::Unable to determine project version from mix.exs"
+          exit 1
+        fi
+
+        {
+          echo "bare-version=$bare_version"
+          echo "version=${{ inputs.prefix }}$bare_version"
+        } >> "$GITHUB_OUTPUT"

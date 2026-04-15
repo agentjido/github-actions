@@ -1,52 +1,80 @@
-# Reusable Elixir Release Workflow
-# Usage: uses: agentjido/github-actions/.github/workflows/elixir-release.yml@main
-#
-# Requires: secrets: inherit in caller workflow
-# Token: Uses GITHUB_TOKEN with contents:write permission
-# If branch protection requires admin push, use a PAT instead
-
 name: Elixir Release
 
 on:
   workflow_call:
+    secrets:
+      HEX_API_KEY:
+        required: false
+      RELEASE_TOKEN:
+        required: false
     inputs:
       otp_version:
-        description: 'OTP version'
+        description: OTP version
         required: false
         type: string
-        default: '28'
+        default: "28"
       elixir_version:
-        description: 'Elixir version'
+        description: Elixir version
         required: false
         type: string
-        default: '1.18'
+        default: "1.18"
       mix_env:
-        description: 'MIX_ENV for release'
+        description: MIX_ENV for release preparation
         required: false
         type: string
-        default: 'dev'
+        default: "dev"
       release_command:
-        description: 'Release command'
+        description: Release command
         required: false
         type: string
-        default: 'mix git_ops.release --yes'
+        default: "mix git_ops.release --yes"
       version_override:
-        description: 'Optional explicit bare SemVer override for git_ops.release (for example 1.2.3, not v1.2.3)'
+        description: Optional bare SemVer override for git_ops.release
         required: false
         type: string
-        default: ''
+        default: ""
+      preflight_command:
+        description: Command run before the actual release step
+        required: false
+        type: string
+        default: "mix hex.audit && mix test"
+      db_setup_command:
+        description: Optional database setup command for release preflight
+        required: false
+        type: string
+        default: ""
+      database_url:
+        description: Optional explicit DATABASE_URL for release preflight
+        required: false
+        type: string
+        default: ""
+      release_push_mode:
+        description: "Release push mode: direct or pull-request"
+        required: false
+        type: string
+        default: "direct"
+      release_notes_mode:
+        description: "GitHub release notes mode: changelog or generated"
+        required: false
+        type: string
+        default: "changelog"
       dry_run:
-        description: 'Dry run (no git push, no tag, no GitHub release, no Hex publish)'
+        description: Run the release flow without pushing, GitHub release creation, or Hex publish
         required: false
         type: boolean
         default: false
       hex_dry_run:
-        description: 'Hex dry run only (run all git/release steps, but skip actual Hex publish)'
+        description: Run the git release flow but perform a Hex dry run
+        required: false
+        type: boolean
+        default: false
+      skip_preflight:
+        description: Skip the preflight command entirely
         required: false
         type: boolean
         default: false
       skip_tests:
-        description: 'Skip tests before release'
+        description: Backward-compatible alias for skipping preflight validation
         required: false
         type: boolean
         default: false
@@ -55,194 +83,276 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     concurrency:
       group: release-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
-
     permissions:
       contents: write
-
+      pull-requests: write
     steps:
+      - name: Validate release mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.release_push_mode }}" in
+            pull-request|direct) ;;
+            *)
+              echo "::error::Unsupported release_push_mode: ${{ inputs.release_push_mode }}"
+              exit 1
+              ;;
+          esac
+
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ github.token }}
+          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+
+      - name: Resolve workflow platform ref
+        id: platform-ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow_ref='${{ github.workflow_ref }}'
+          echo "repository=${workflow_ref%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${workflow_ref#*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ steps.platform-ref.outputs.repository }}
+          ref: ${{ steps.platform-ref.outputs.ref }}
+          path: .github-actions-platform
 
       - name: Disable git hooks
+        shell: bash
         run: git config core.hooksPath /dev/null
 
-      - name: Fetch tags
+      - name: Configure git
+        shell: bash
         run: |
-          git fetch --tags --force
-          echo "Available tags:"
-          git tag -l | tail -10
-
-      - name: Configure Git
-        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
         with:
           otp-version: ${{ inputs.otp_version }}
           elixir-version: ${{ inputs.elixir_version }}
 
-      - name: Restore Hex/Mix cache
-        uses: actions/cache@v5
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
         with:
-          path: |
-            ~/.hex
-            ~/.mix
-          key: ${{ runner.os }}-beamtools-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-beamtools-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
 
-      - name: Install Hex/Rebar
-        run: |
-          set -euo pipefail
-          mix local.hex --force
-          mix local.rebar --force
-
-      - name: Restore dependencies cache
-        uses: actions/cache@v5
-        id: deps-cache
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ inputs.mix_env }}-otp${{ inputs.otp_version }}-elixir${{ inputs.elixir_version }}-${{ hashFiles('mix.lock') }}
-
-      - name: Remove cached rebar3 build artifacts in deps
-        run: |
-          if [ -d deps ]; then
-            find deps -maxdepth 6 -type d \( -name _build -o -name .rebar3 \) -prune -exec rm -rf {} + || true
-            find deps -maxdepth 6 -type f -name rebar3.crashdump -delete || true
-          fi
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
 
       - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Prepare database for preflight
+        if: ${{ inputs.db_setup_command != '' && inputs.skip_preflight != true && inputs.skip_tests != true }}
+        shell: bash
+        env:
+          DATABASE_URL: ${{ inputs.database_url }}
+          DB_SETUP_COMMAND: ${{ inputs.db_setup_command }}
         run: |
           set -euo pipefail
-          mix deps.get
-          mix deps.compile
+          if [ -n "$DATABASE_URL" ]; then
+            export DATABASE_URL
+          fi
+          bash -lc "$DB_SETUP_COMMAND"
+
+      - name: Run preflight checks
+        if: ${{ inputs.skip_preflight != true && inputs.skip_tests != true }}
+        shell: bash
         env:
           MIX_ENV: ${{ inputs.mix_env }}
-
-      - name: Run tests
-        if: ${{ inputs.skip_tests != true }}
         run: |
           set -euo pipefail
-          mix test
+          bash -lc "${{ inputs.preflight_command }}"
 
       - name: Run release
         id: release
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: |
           set -euo pipefail
 
           run_release() {
             local escaped_args=""
-
             if [ "$#" -gt 0 ]; then
               printf -v escaped_args '%q ' "$@"
             fi
-
             bash -lc "${{ inputs.release_command }} ${escaped_args}"
           }
 
-          if [ -n "$VERSION_OVERRIDE" ]; then
-            echo "Using explicit version override: $VERSION_OVERRIDE"
-          fi
+          dry_run_log="$(mktemp)"
+          trap 'rm -f "$dry_run_log"' EXIT
 
-          DRY_RUN_LOG=$(mktemp)
-          trap 'rm -f "$DRY_RUN_LOG"' EXIT
-
-          # Capture the dry-run output so we can inspect it without pipefail masking matches.
           if [ -n "$VERSION_OVERRIDE" ]; then
-            if run_release --override "$VERSION_OVERRIDE" --dry-run >"$DRY_RUN_LOG" 2>&1; then
-              DRY_RUN_STATUS=0
+            if run_release --override "$VERSION_OVERRIDE" --dry-run >"$dry_run_log" 2>&1; then
+              dry_run_status=0
             else
-              DRY_RUN_STATUS=$?
+              dry_run_status=$?
             fi
-          elif run_release --dry-run >"$DRY_RUN_LOG" 2>&1; then
-            DRY_RUN_STATUS=0
+          elif run_release --dry-run >"$dry_run_log" 2>&1; then
+            dry_run_status=0
           else
-            DRY_RUN_STATUS=$?
+            dry_run_status=$?
           fi
 
-          cat "$DRY_RUN_LOG"
+          cat "$dry_run_log"
 
-          # Check for releasable commits first (dry-run to detect "no changes")
-          if [ -z "$VERSION_OVERRIDE" ] && grep -qE "(No changes since|No changes should result)" "$DRY_RUN_LOG"; then
-            echo "No releasable commits found since last release"
-            echo "skipped=true" >> $GITHUB_OUTPUT
-            echo "### Skipped: No releasable commits" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$VERSION_OVERRIDE" ] && grep -qE "(No changes since|No changes should result)" "$dry_run_log"; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "No releasable commits found since the last release."
             exit 0
           fi
 
-          if [ "$DRY_RUN_STATUS" -ne 0 ]; then
-            exit "$DRY_RUN_STATUS"
+          if [ "$dry_run_status" -ne 0 ]; then
+            exit "$dry_run_status"
           fi
 
-          # Run the actual release (no output capture to avoid exit code issues)
           if [ -n "$VERSION_OVERRIDE" ]; then
             run_release --override "$VERSION_OVERRIDE"
           else
             run_release
           fi
 
-          # Extract version from mix.exs after release (grep to avoid mix compilation output)
-          VERSION="v$(grep -m1 '@version "' mix.exs | sed 's/.*"\(.*\)".*/\1/' || grep -m1 'version:' mix.exs | sed 's/.*"\(.*\)".*/\1/')"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "skipped=false" >> $GITHUB_OUTPUT
-          echo "### Version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
-        env:
-          MIX_ENV: ${{ inputs.mix_env }}
-          VERSION_OVERRIDE: ${{ inputs.version_override }}
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
 
-      - name: Push changes and tags
-        if: steps.release.outputs.skipped != 'true' && inputs.dry_run != true
+      - name: Extract release version
+        if: ${{ steps.release.outputs.skipped != 'true' }}
+        id: version
+        uses: ./.github-actions-platform/.github/actions/extract-version
+
+      - name: Prepare release pull request
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'pull-request' && inputs.dry_run != true }}
+        id: release-pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.release.outputs.version }}"
-          git push --atomic origin HEAD "refs/tags/$VERSION"
-          echo "Released version $VERSION"
-          echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          branch="release/${RELEASE_VERSION}"
+          git switch -c "$branch"
+          if git rev-parse "${RELEASE_VERSION}" >/dev/null 2>&1; then
+            git tag -d "${RELEASE_VERSION}"
+          fi
+          git push --set-upstream origin "$branch"
+          pr_url="$(gh pr create \
+            --base "$DEFAULT_BRANCH" \
+            --head "$branch" \
+            --title "release: ${RELEASE_VERSION}" \
+            --body "Automated release preparation for ${RELEASE_VERSION}. Merge this PR, then rerun the release workflow in direct mode to push the tag and publish.")"
+          echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Push release commit and tag
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true }}
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git push --atomic origin HEAD "refs/tags/${RELEASE_VERSION}"
+
+      - name: Extract changelog notes
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.release_notes_mode == 'changelog' }}
+        id: release-notes
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          bare_version="${RELEASE_VERSION#v}"
+          awk -v version="$bare_version" '
+            /^## \[v?[0-9]/ {
+              if (found) exit
+              if (index($0, "[v" version "]") || index($0, "[" version "]")) {
+                found = 1
+                next
+              }
+            }
+            found {
+              if (/^## \[v?[0-9]/) exit
+              print
+            }
+          ' CHANGELOG.md > release_notes.md
+
+          if [ -s release_notes.md ]; then
+            echo "has-notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-notes=false" >> "$GITHUB_OUTPUT"
+            rm -f release_notes.md
+          fi
 
       - name: Publish to Hex.pm
-        if: steps.release.outputs.skipped != 'true'
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' }}
+        shell: bash
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          MIX_ENV: ${{ inputs.mix_env }}
         run: |
           set -euo pipefail
           if [ "${{ inputs.dry_run }}" = "true" ] || [ "${{ inputs.hex_dry_run }}" = "true" ]; then
-            echo "### Hex Dry Run - Would publish:" >> "$GITHUB_STEP_SUMMARY"
             mix hex.publish --dry-run
           else
             mix hex.publish --yes
-            echo "### Published to Hex.pm" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "- Version: ${{ steps.release.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create GitHub release
-        if: steps.release.outputs.skipped != 'true' && inputs.dry_run != true
+      - name: Create GitHub release with changelog notes
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.release_notes_mode == 'changelog' && steps.release-notes.outputs.has-notes == 'true' }}
+        shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.release.outputs.version }}"
-          gh release create "$VERSION" \
-            --title "Release $VERSION" \
-            --notes "See [CHANGELOG.md](CHANGELOG.md) for details."
+          gh release create "$RELEASE_VERSION" \
+            --title "Release $RELEASE_VERSION" \
+            --notes-file release_notes.md
+
+      - name: Create GitHub release with generated notes
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && (inputs.release_notes_mode == 'generated' || steps.release-notes.outputs.has-notes != 'true') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_VERSION" \
+            --title "Release $RELEASE_VERSION" \
+            --generate-notes
 
       - name: Release summary
+        if: always()
+        shell: bash
         run: |
-          if [ "${{ steps.release.outputs.skipped }}" == "true" ]; then
-            echo "::notice::No releasable commits found since last release"
-          elif [ "${{ inputs.dry_run }}" == "true" ]; then
-            echo "::notice::Dry run completed for ${{ steps.release.outputs.version }}"
-          else
-            echo "::notice::Successfully released ${{ steps.release.outputs.version }}"
-          fi
+          {
+            echo "## Release Summary"
+            echo "- Skipped: ${{ steps.release.outputs.skipped || 'false' }}"
+            echo "- Mode: ${{ inputs.release_push_mode }}"
+            echo "- Dry run: ${{ inputs.dry_run }}"
+            echo "- Hex dry run: ${{ inputs.hex_dry_run }}"
+            if [ -n "${{ steps.version.outputs.version }}" ]; then
+              echo "- Version: ${{ steps.version.outputs.version }}"
+            fi
+            if [ -n "${{ steps.release-pr.outputs.pr-url }}" ]; then
+              echo "- Release PR: ${{ steps.release-pr.outputs.pr-url }}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

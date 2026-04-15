@@ -1,0 +1,32 @@
+name: Setup Beam
+description: Install OTP and Elixir with optional strict version resolution.
+
+inputs:
+  otp-version:
+    description: OTP version to install
+    required: true
+  elixir-version:
+    description: Elixir version to install
+    required: true
+  version-type:
+    description: Optional setup-beam version resolution mode
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Beam
+      if: ${{ inputs.version-type == '' }}
+      uses: erlef/setup-beam@988e02bfe678367a02564f65ca2e37726dc0268f # v1.9.0
+      with:
+        otp-version: ${{ inputs.otp-version }}
+        elixir-version: ${{ inputs.elixir-version }}
+
+    - name: Setup Beam (strict)
+      if: ${{ inputs.version-type != '' }}
+      uses: erlef/setup-beam@988e02bfe678367a02564f65ca2e37726dc0268f # v1.9.0
+      with:
+        otp-version: ${{ inputs.otp-version }}
+        elixir-version: ${{ inputs.elixir-version }}
+        version-type: ${{ inputs.version-type }}

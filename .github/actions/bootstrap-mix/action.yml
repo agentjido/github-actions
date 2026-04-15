@@ -1,0 +1,12 @@
+name: Bootstrap Mix
+description: Install Hex and Rebar in the runner environment.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Hex and Rebar
+      shell: bash
+      run: |
+        set -euo pipefail
+        mix local.hex --force
+        mix local.rebar --force

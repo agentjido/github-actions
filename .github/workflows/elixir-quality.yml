@@ -1,0 +1,233 @@
+name: Elixir Quality
+
+on:
+  workflow_call:
+    secrets:
+      HEX_API_KEY:
+        required: false
+    inputs:
+      otp_version:
+        description: OTP version
+        required: false
+        type: string
+        default: "28"
+      elixir_version:
+        description: Elixir version
+        required: false
+        type: string
+        default: "1.19"
+      mix_env:
+        description: MIX_ENV used for quality checks
+        required: false
+        type: string
+        default: "dev"
+      quality_command:
+        description: Optional full replacement command for the default quality checks
+        required: false
+        type: string
+        default: ""
+      changelog_guard:
+        description: Block pull requests that modify CHANGELOG.md
+        required: false
+        type: boolean
+        default: true
+      validate_hex_package:
+        description: Run mix hex.publish --dry-run on pull requests
+        required: false
+        type: boolean
+        default: true
+      docs:
+        description: Build project documentation
+        required: false
+        type: boolean
+        default: false
+      docs_command:
+        description: Documentation build command
+        required: false
+        type: string
+        default: "mix docs"
+      sobelow:
+        description: Run Sobelow
+        required: false
+        type: boolean
+        default: false
+      sobelow_command:
+        description: Sobelow command
+        required: false
+        type: string
+        default: "mix sobelow"
+      conventional_commits:
+        description: Validate the current commit message with git_ops
+        required: false
+        type: boolean
+        default: false
+      conventional_commit_command:
+        description: Conventional commit validation command
+        required: false
+        type: string
+        default: "mix git_ops.check_message"
+
+jobs:
+  changelog-guard:
+    name: Changelog Guard
+    runs-on: ubuntu-24.04
+    if: ${{ inputs.changelog_guard && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check for CHANGELOG.md modifications
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files="$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename')"
+          if echo "$files" | grep -qE '^CHANGELOG\.md$'; then
+            echo "::error::CHANGELOG.md should not be edited manually because git_ops generates it during releases."
+            exit 1
+          fi
+          echo "No CHANGELOG.md modifications detected."
+
+  quality:
+    name: Quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve workflow platform ref
+        id: platform-ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow_ref='${{ github.workflow_ref }}'
+          echo "repository=${workflow_ref%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${workflow_ref#*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ steps.platform-ref.outputs.repository }}
+          ref: ${{ steps.platform-ref.outputs.ref }}
+          path: .github-actions-platform
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+          restore-plt: "true"
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Audit Hex dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mix hex.audit
+
+      - name: Run custom quality command
+        if: ${{ inputs.quality_command != '' }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          ${{ inputs.quality_command }}
+
+      - name: Check formatting
+        if: ${{ inputs.quality_command == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mix format --check-formatted
+
+      - name: Compile with warnings as errors
+        if: ${{ inputs.quality_command == '' }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          mix compile --warnings-as-errors
+
+      - name: Run Credo
+        if: ${{ inputs.quality_command == '' }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          mix credo --strict
+
+      - name: Run Dialyzer
+        if: ${{ inputs.quality_command == '' }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          mix dialyzer
+
+      - name: Check for unused dependencies
+        if: ${{ inputs.quality_command == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mix deps.unlock --check-unused
+
+      - name: Validate conventional commit message
+        if: ${{ inputs.conventional_commits }}
+        shell: bash
+        env:
+          MIX_ENV: test
+        run: |
+          set -euo pipefail
+          ${{ inputs.conventional_commit_command }}
+
+      - name: Run Sobelow
+        if: ${{ inputs.sobelow }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          ${{ inputs.sobelow_command }}
+
+      - name: Build docs
+        if: ${{ inputs.docs }}
+        shell: bash
+        env:
+          MIX_ENV: dev
+        run: |
+          set -euo pipefail
+          ${{ inputs.docs_command }}
+
+      - name: Validate Hex package
+        if: ${{ github.event_name == 'pull_request' && inputs.validate_hex_package }}
+        shell: bash
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          MIX_ENV: dev
+        run: |
+          set -euo pipefail
+          mix hex.publish --dry-run

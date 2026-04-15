@@ -1,0 +1,56 @@
+name: Install Mix Dependencies
+description: Restore dependencies with optional compile and cache cleanup.
+
+inputs:
+  mix-env:
+    description: MIX_ENV used while compiling dependencies
+    required: false
+    default: test
+  deps-cache-hit:
+    description: Whether the deps/_build cache was restored
+    required: false
+    default: ""
+  deps-get-command:
+    description: Command used to fetch dependencies
+    required: false
+    default: mix deps.get
+  deps-compile-command:
+    description: Command used to compile dependencies
+    required: false
+    default: mix deps.compile
+  compile-deps:
+    description: Whether to compile dependencies when cache is cold
+    required: false
+    default: "true"
+  prune-rebar-artifacts:
+    description: Remove stale rebar artifacts on cache miss
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Remove stale rebar artifacts
+      if: ${{ inputs.prune-rebar-artifacts == 'true' && inputs.deps-cache-hit != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -d deps ]; then
+          find deps -maxdepth 6 -type d \( -name _build -o -name .rebar3 \) -prune -exec rm -rf {} + || true
+          find deps -maxdepth 6 -type f -name rebar3.crashdump -delete || true
+        fi
+
+    - name: Fetch dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        ${{ inputs.deps-get-command }}
+
+    - name: Compile dependencies
+      if: ${{ inputs.compile-deps == 'true' && inputs.deps-cache-hit != 'true' }}
+      shell: bash
+      env:
+        MIX_ENV: ${{ inputs.mix-env }}
+      run: |
+        set -euo pipefail
+        ${{ inputs.deps-compile-command }}
