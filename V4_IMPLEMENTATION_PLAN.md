@@ -57,9 +57,12 @@ Tasks:
    - `test_mix_env`
    - `test_setup_command`
    - `test_command`
+   - per-check commands such as `credo_command`, `docs_command`, and `dialyzer_command`
    - `changelog_guard_mode`
    - `dependency_submission`
    - `credo_sarif`
+   - `community_files`
+   - `reuse`
    - `writeback`
    - `writeback_command`
    - `writeback_paths`
@@ -73,7 +76,6 @@ Tasks:
    - `release_command`
    - `version_override`
    - `preflight_command`
-   - `db_setup_command`
    - `release_push_mode`
    - `dry_run`
    - `hex_dry_run`
@@ -302,7 +304,6 @@ Tasks:
 1. Refactor `.github/workflows/elixir-release.yml` to use helper actions.
 2. Add explicit release inputs:
    - `preflight_command`
-   - `db_setup_command`
    - `release_push_mode`
    - `release_notes_mode`
 3. Enforce the release atomicity invariant:
@@ -377,9 +378,8 @@ Pilot set:
 
 1. one pure library repo
 2. one repo using default split quality checks
-3. one repo using `quality_command` migration mode
-4. one repo that needs write-back
-5. one repo that exercises release behavior on protected `main`
+3. one repo that needs write-back
+4. one repo that exercises release behavior on protected `main`
 
 Suggested candidates:
 

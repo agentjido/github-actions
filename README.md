@@ -36,17 +36,6 @@ jobs:
     secrets: inherit
 ```
 
-For migration from an existing repo-specific `mix quality` alias:
-
-```yaml
-jobs:
-  ci:
-    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
-    secrets: inherit
-    with:
-      quality_command: mix quality
-```
-
 For write-back automation:
 
 ```yaml
@@ -101,11 +90,16 @@ jobs:
 | `test_mix_env` | string | `test` | `MIX_ENV` for tests |
 | `test_setup_command` | string | `""` | Optional command before tests |
 | `test_command` | string | `mix test` | Test command |
-| `quality_command` | string | `""` | Full replacement quality command for migration |
+| `audit_command` | string | `mix hex.audit` | Audit command |
+| `format_command` | string | `mix format --check-formatted` | Format check command |
+| `credo_command` | string | `mix credo --strict` | Credo command |
+| `dialyzer_command` | string | `mix dialyzer` | Dialyzer command |
+| `unused_deps_command` | string | `mix deps.unlock --check-unused` | Unused dependency check command |
+| `hex_package_command` | string | `HEX_API_KEY=${HEX_API_KEY:-dry-run} mix hex.publish --dry-run --yes` | Hex package validation command |
 | `changelog_guard` | boolean | `true` | Enable CHANGELOG.md PR policy |
 | `changelog_guard_mode` | string | `no_changes` | `no_changes` or `no_unreleased` |
-| `validate_hex_package` | boolean | `true` | Run `mix hex.publish --dry-run` on PRs |
-| `docs` | boolean | `false` | Run docs build |
+| `validate_hex_package` | boolean | `true` | Run the Hex package dry-run command on PRs |
+| `docs` | boolean | `true` | Run docs build |
 | `docs_command` | string | `mix docs` | Docs build command |
 | `sobelow` | boolean | `false` | Run Sobelow |
 | `sobelow_command` | string | `mix sobelow` | Sobelow command |
@@ -113,6 +107,10 @@ jobs:
 | `conventional_commit_command` | string | `mix git_ops.check_message` | Conventional commit command |
 | `dependency_submission` | boolean | `false` | Submit dependency graph data on default-branch pushes |
 | `credo_sarif` | boolean | `false` | Upload Credo SARIF to code scanning |
+| `community_files` | boolean | `true` | Check Jido community file policy |
+| `community_files_source_repository` | string | `agentjido/.github` | Repository containing canonical community files |
+| `community_files_source_ref` | string | `main` | Ref containing canonical community files |
+| `reuse` | boolean | `true` | Run REUSE compliance check |
 | `writeback` | boolean | `false` | Enable automated write-back |
 | `writeback_command` | string | `""` | Command that produces write-back changes |
 | `writeback_paths` | string | `.` | Space-delimited pathspecs eligible for write-back commits |
@@ -129,8 +127,6 @@ jobs:
 | `release_command` | string | `mix git_ops.release --yes` | Release command |
 | `version_override` | string | `""` | Optional bare SemVer override |
 | `preflight_command` | string | `mix hex.audit && mix test` | Validation before release |
-| `db_setup_command` | string | `""` | Optional release preflight setup command |
-| `database_url` | string | `""` | Optional release preflight `DATABASE_URL` |
 | `release_push_mode` | string | `direct` | `direct` or `pull-request` |
 | `release_notes_mode` | string | `changelog` | `changelog` or `generated` |
 | `dry_run` | boolean | `false` | Run release flow without push, GitHub release, or Hex publish |

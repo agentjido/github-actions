@@ -21,11 +21,36 @@ on:
         required: false
         type: string
         default: "dev"
-      quality_command:
-        description: Optional full replacement command for the default quality checks
+      audit_command:
+        description: Audit command
         required: false
         type: string
-        default: ""
+        default: "mix hex.audit"
+      format_command:
+        description: Format check command
+        required: false
+        type: string
+        default: "mix format --check-formatted"
+      credo_command:
+        description: Credo command
+        required: false
+        type: string
+        default: "mix credo --strict"
+      dialyzer_command:
+        description: Dialyzer command
+        required: false
+        type: string
+        default: "mix dialyzer"
+      unused_deps_command:
+        description: Unused dependency check command
+        required: false
+        type: string
+        default: "mix deps.unlock --check-unused"
+      hex_package_command:
+        description: Hex package validation command
+        required: false
+        type: string
+        default: "HEX_API_KEY=${HEX_API_KEY:-dry-run} mix hex.publish --dry-run --yes"
       changelog_guard:
         description: Enable CHANGELOG.md pull request policy
         required: false
@@ -37,7 +62,7 @@ on:
         type: string
         default: "no_changes"
       validate_hex_package:
-        description: Run mix hex.publish --dry-run on pull requests
+        description: Run the Hex package dry-run command on pull requests
         required: false
         type: boolean
         default: true
@@ -45,7 +70,7 @@ on:
         description: Build project documentation
         required: false
         type: boolean
-        default: false
+        default: true
       docs_command:
         description: Documentation build command
         required: false
@@ -71,11 +96,6 @@ on:
         required: false
         type: string
         default: "mix git_ops.check_message"
-      credo_sarif:
-        description: Upload Credo SARIF results to code scanning
-        required: false
-        type: boolean
-        default: false
       workflow_platform_repository:
         description: Internal workflow platform repository
         required: true
@@ -177,61 +197,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mix hex.audit
-
-  custom-quality:
-    name: Custom Quality
-    if: ${{ inputs.quality_command != '' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Checkout workflow platform
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: ${{ inputs.workflow_platform_repository }}
-          ref: ${{ inputs.workflow_platform_ref }}
-          path: ${{ inputs.workflow_platform_path }}
-
-      - name: Setup Beam
-        uses: ./.github-actions-platform/.github/actions/setup-beam
-        with:
-          otp-version: ${{ inputs.otp_version }}
-          elixir-version: ${{ inputs.elixir_version }}
-
-      - name: Restore caches
-        id: cache
-        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
-        with:
-          otp-version: ${{ inputs.otp_version }}
-          elixir-version: ${{ inputs.elixir_version }}
-          mix-env: ${{ inputs.mix_env }}
-          restore-plt: "true"
-
-      - name: Bootstrap Mix
-        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
-
-      - name: Install dependencies
-        uses: ./.github-actions-platform/.github/actions/install-deps
-        with:
-          mix-env: ${{ inputs.mix_env }}
-          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
-
-      - name: Run custom quality command
-        shell: bash
-        env:
-          MIX_ENV: ${{ inputs.mix_env }}
-        run: |
-          set -euo pipefail
-          ${{ inputs.quality_command }}
+          ${{ inputs.audit_command }}
 
   format:
     name: Format
-    if: ${{ inputs.quality_command == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -274,11 +243,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mix format --check-formatted
+          ${{ inputs.format_command }}
 
   credo:
     name: Credo
-    if: ${{ inputs.quality_command == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -323,64 +291,10 @@ jobs:
           MIX_ENV: ${{ inputs.mix_env }}
         run: |
           set -euo pipefail
-          mix credo --strict
-
-  credo-sarif:
-    name: Credo SARIF
-    if: ${{ inputs.quality_command == '' && inputs.credo_sarif }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Checkout workflow platform
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: ${{ inputs.workflow_platform_repository }}
-          ref: ${{ inputs.workflow_platform_ref }}
-          path: ${{ inputs.workflow_platform_path }}
-
-      - name: Setup Beam
-        uses: ./.github-actions-platform/.github/actions/setup-beam
-        with:
-          otp-version: ${{ inputs.otp_version }}
-          elixir-version: ${{ inputs.elixir_version }}
-
-      - name: Restore caches
-        id: cache
-        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
-        with:
-          otp-version: ${{ inputs.otp_version }}
-          elixir-version: ${{ inputs.elixir_version }}
-          mix-env: ${{ inputs.mix_env }}
-
-      - name: Bootstrap Mix
-        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
-
-      - name: Install dependencies
-        uses: ./.github-actions-platform/.github/actions/install-deps
-        with:
-          mix-env: ${{ inputs.mix_env }}
-          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
-
-      - name: Run Credo SARIF
-        shell: bash
-        env:
-          MIX_ENV: ${{ inputs.mix_env }}
-        run: |
-          set -euo pipefail
-          mix credo --format sarif > results.sarif
-
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@0499de31b99561a6d14a36a5f662c2a54f91beee # v4.31.2
-        with:
-          sarif_file: results.sarif
-          category: credo
+          ${{ inputs.credo_command }}
 
   dialyzer:
     name: Dialyzer
-    if: ${{ inputs.quality_command == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -426,11 +340,10 @@ jobs:
           MIX_ENV: ${{ inputs.mix_env }}
         run: |
           set -euo pipefail
-          mix dialyzer
+          ${{ inputs.dialyzer_command }}
 
   unused-deps:
     name: Unused Deps
-    if: ${{ inputs.quality_command == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -473,7 +386,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mix deps.unlock --check-unused
+          ${{ inputs.unused_deps_command }}
 
   hex-package-dry-run:
     name: Hex Package Dry Run
@@ -523,7 +436,7 @@ jobs:
           MIX_ENV: dev
         run: |
           set -euo pipefail
-          mix hex.publish --dry-run
+          ${{ inputs.hex_package_command }}
 
   docs:
     name: Docs

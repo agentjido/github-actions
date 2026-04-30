@@ -38,16 +38,6 @@ on:
         required: false
         type: string
         default: "mix hex.audit && mix test"
-      db_setup_command:
-        description: Optional database setup command for release preflight
-        required: false
-        type: string
-        default: ""
-      database_url:
-        description: Optional explicit DATABASE_URL for release preflight
-        required: false
-        type: string
-        default: ""
       release_push_mode:
         description: "Release push mode: direct or pull-request"
         required: false
@@ -170,19 +160,6 @@ jobs:
           mix-env: ${{ inputs.mix_env }}
           deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
 
-      - name: Prepare database for preflight
-        if: ${{ inputs.db_setup_command != '' && inputs.skip_preflight != true && inputs.skip_tests != true }}
-        shell: bash
-        env:
-          DATABASE_URL: ${{ inputs.database_url }}
-          DB_SETUP_COMMAND: ${{ inputs.db_setup_command }}
-        run: |
-          set -euo pipefail
-          if [ -n "$DATABASE_URL" ]; then
-            export DATABASE_URL
-          fi
-          bash -lc "$DB_SETUP_COMMAND"
-
       - name: Run preflight checks
         if: ${{ inputs.skip_preflight != true && inputs.skip_tests != true }}
         shell: bash
@@ -234,6 +211,12 @@ jobs:
 
           if [ "$dry_run_status" -ne 0 ]; then
             exit "$dry_run_status"
+          fi
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "Dry run requested; skipping release commit, tag, publish, and GitHub release."
+            exit 0
           fi
 
           if [ -n "$VERSION_OVERRIDE" ]; then
@@ -289,8 +272,8 @@ jobs:
           MIX_ENV: ${{ inputs.mix_env }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ] || [ "${{ inputs.hex_dry_run }}" = "true" ]; then
-            mix hex.publish --dry-run
+          if [ "${{ inputs.hex_dry_run }}" = "true" ]; then
+            HEX_API_KEY="${HEX_API_KEY:-dry-run}" mix hex.publish --dry-run --yes
           else
             mix hex.publish --yes
           fi

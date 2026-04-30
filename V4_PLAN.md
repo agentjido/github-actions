@@ -225,7 +225,7 @@ Reasons:
 
 Still support overrides where needed:
 
-- `quality_command` for full replacement
+- per-check command overrides such as `credo_command`, `docs_command`, and `dialyzer_command`
 - `docs_command`
 - `sobelow_command`
 
@@ -584,7 +584,6 @@ Recommended default:
 Support overrides:
 
 - `preflight_command`
-- `db_setup_command`
 - `skip_preflight`
 
 ### Protected Branch Operator Guidance
@@ -766,7 +765,6 @@ Pilot v4 in a small set of repos:
 
 - one pure library repo
 - one repo using the default split quality path
-- one repo using the `quality_command` migration path
 - one repo with the most release complexity
 
 Suggested candidates:

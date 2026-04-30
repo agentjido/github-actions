@@ -63,11 +63,36 @@ on:
         required: false
         type: string
         default: "mix test"
-      quality_command:
-        description: Optional full replacement quality command
+      audit_command:
+        description: Audit command
         required: false
         type: string
-        default: ""
+        default: "mix hex.audit"
+      format_command:
+        description: Format check command
+        required: false
+        type: string
+        default: "mix format --check-formatted"
+      credo_command:
+        description: Credo command
+        required: false
+        type: string
+        default: "mix credo --strict"
+      dialyzer_command:
+        description: Dialyzer command
+        required: false
+        type: string
+        default: "mix dialyzer"
+      unused_deps_command:
+        description: Unused dependency check command
+        required: false
+        type: string
+        default: "mix deps.unlock --check-unused"
+      hex_package_command:
+        description: Hex package validation command
+        required: false
+        type: string
+        default: "HEX_API_KEY=${HEX_API_KEY:-dry-run} mix hex.publish --dry-run --yes"
       changelog_guard:
         description: Enable CHANGELOG.md pull request policy
         required: false
@@ -79,7 +104,7 @@ on:
         type: string
         default: "no_changes"
       validate_hex_package:
-        description: Run mix hex.publish --dry-run during pull requests
+        description: Run the Hex package dry-run command during pull requests
         required: false
         type: boolean
         default: true
@@ -87,7 +112,7 @@ on:
         description: Build docs in the quality lane
         required: false
         type: boolean
-        default: false
+        default: true
       docs_command:
         description: Documentation build command
         required: false
@@ -123,6 +148,26 @@ on:
         required: false
         type: boolean
         default: false
+      community_files:
+        description: Check Jido community file policy
+        required: false
+        type: boolean
+        default: true
+      community_files_source_repository:
+        description: Repository containing canonical community files
+        required: false
+        type: string
+        default: "agentjido/.github"
+      community_files_source_ref:
+        description: Ref containing canonical community files
+        required: false
+        type: string
+        default: "main"
+      reuse:
+        description: Run REUSE compliance check
+        required: false
+        type: boolean
+        default: true
       writeback:
         description: Enable automated write-back after successful validation
         required: false
@@ -242,7 +287,12 @@ jobs:
       otp_version: ${{ inputs.quality_otp_version }}
       elixir_version: ${{ inputs.quality_elixir_version }}
       mix_env: ${{ inputs.quality_mix_env }}
-      quality_command: ${{ inputs.quality_command }}
+      audit_command: ${{ inputs.audit_command }}
+      format_command: ${{ inputs.format_command }}
+      credo_command: ${{ inputs.credo_command }}
+      dialyzer_command: ${{ inputs.dialyzer_command }}
+      unused_deps_command: ${{ inputs.unused_deps_command }}
+      hex_package_command: ${{ inputs.hex_package_command }}
       changelog_guard: ${{ inputs.changelog_guard }}
       changelog_guard_mode: ${{ inputs.changelog_guard_mode }}
       validate_hex_package: ${{ inputs.validate_hex_package }}
@@ -252,7 +302,6 @@ jobs:
       sobelow_command: ${{ inputs.sobelow_command }}
       conventional_commits: ${{ inputs.conventional_commits }}
       conventional_commit_command: ${{ inputs.conventional_commit_command }}
-      credo_sarif: false
       workflow_platform_repository: ${{ needs.resolve-platform.outputs.repository }}
       workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
       workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
@@ -283,7 +332,7 @@ jobs:
     needs:
       - resolve-platform
       - compile
-    if: ${{ inputs.credo_sarif && inputs.quality_command == '' }}
+    if: ${{ inputs.credo_sarif }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -334,6 +383,83 @@ jobs:
           sarif_file: results.sarif
           category: credo
 
+  community-files:
+    name: Community Files
+    if: ${{ inputs.community_files }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout community file source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.community_files_source_repository }}
+          ref: ${{ inputs.community_files_source_ref }}
+          path: .jido-community-files
+
+      - name: Check community files
+        shell: bash
+        run: |
+          set -euo pipefail
+          exit_code=0
+
+          for file in CODE_OF_CONDUCT.md FUNDING.yml; do
+            if [ -f "$file" ]; then
+              echo "::error::$file must live in .github/ or be inherited from ${{ inputs.community_files_source_repository }}."
+              exit_code=1
+            fi
+          done
+
+          mappings=(
+            ".github/CODE_OF_CONDUCT.md:.github/CODE_OF_CONDUCT.md"
+            ".github/FUNDING.yml:.github/FUNDING.yml"
+            ".github/PULL_REQUEST_TEMPLATE.md:.github/PULL_REQUEST_TEMPLATE.md"
+            ".github/ISSUE_TEMPLATE/bug_report.md:.github/ISSUE_TEMPLATE/bug_report.md"
+            ".github/ISSUE_TEMPLATE/proposal.md:.github/ISSUE_TEMPLATE/proposal.md"
+          )
+
+          for mapping in "${mappings[@]}"; do
+            local_path="${mapping%%:*}"
+            source_path=".jido-community-files/${mapping#*:}"
+
+            if [ ! -f "$source_path" ]; then
+              echo "::error::Missing canonical community file: ${source_path}"
+              exit_code=1
+              continue
+            fi
+
+            if [ -f "$local_path" ]; then
+              if cmp -s "$source_path" "$local_path"; then
+                echo "Matched $local_path"
+              else
+                echo "::error::$local_path differs from ${{ inputs.community_files_source_repository }}@${{ inputs.community_files_source_ref }}."
+                exit_code=1
+              fi
+            else
+              echo "Using inherited community file for $local_path"
+            fi
+          done
+
+          exit "$exit_code"
+
+  reuse:
+    name: REUSE Compliance
+    if: ${{ inputs.reuse }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run REUSE lint
+        uses: fsfe/reuse-action@772649cfa03a64a08c458c7cca9a6a473d74e7f9 # v6
+
   dependency-submission:
     name: Dependency Submission
     if: ${{ inputs.dependency_submission && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -351,7 +477,9 @@ jobs:
       - resolve-platform
       - quality
       - test
-    if: ${{ inputs.writeback && inputs.writeback_command != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - community-files
+      - reuse
+    if: ${{ always() && !failure() && !cancelled() && inputs.writeback && inputs.writeback_command != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     concurrency:
@@ -486,6 +614,8 @@ jobs:
       - quality
       - test
       - credo-sarif
+      - community-files
+      - reuse
       - dependency-submission
       - writeback
     runs-on: ubuntu-24.04
@@ -501,6 +631,8 @@ jobs:
             echo "- Quality: ${{ needs.quality.result }}"
             echo "- Test: ${{ needs.test.result }}"
             echo "- Credo SARIF: ${{ needs.credo-sarif.result }}"
+            echo "- Community files: ${{ needs.community-files.result }}"
+            echo "- REUSE: ${{ needs.reuse.result }}"
             echo "- Dependency submission: ${{ needs.dependency-submission.result }}"
             echo "- Write-back: ${{ needs.writeback.result }}"
             echo "- Quality toolchain: OTP ${{ inputs.quality_otp_version }}, Elixir ${{ inputs.quality_elixir_version }}"
@@ -509,4 +641,6 @@ jobs:
             echo "- Docs: ${{ inputs.docs }}"
             echo "- Sobelow: ${{ inputs.sobelow }}"
             echo "- Credo SARIF: ${{ inputs.credo_sarif }}"
+            echo "- Community files: ${{ inputs.community_files }}"
+            echo "- REUSE: ${{ inputs.reuse }}"
           } >> "$GITHUB_STEP_SUMMARY"
