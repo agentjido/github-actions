@@ -118,7 +118,7 @@ thorough.
 | `mix_env` | string | `"dev"` | `MIX_ENV` for release preparation |
 | `release_command` | string | `"mix git_ops.release --yes"` | Main release command |
 | `version_override` | string | `""` | Optional bare SemVer override |
-| `preflight_command` | string | `"mix hex.audit && mix test"` | Validation command run before release |
+| `preflight_command` | string | `"mix hex.audit && MIX_ENV=test mix test"` | Validation command run before release |
 | `release_push_mode` | string | `"direct"` | Release strategy: `direct` or `pull-request` |
 | `release_notes_mode` | string | `"changelog"` | GitHub release notes source: `changelog` or `generated` |
 | `dry_run` | boolean | `false` | Skip push, GitHub release creation, and Hex publish |

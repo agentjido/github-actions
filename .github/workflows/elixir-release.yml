@@ -37,7 +37,7 @@ on:
         description: Command run before the actual release step
         required: false
         type: string
-        default: "mix hex.audit && mix test"
+        default: "mix hex.audit && MIX_ENV=test mix test"
       release_push_mode:
         description: "Release push mode: direct or pull-request"
         required: false

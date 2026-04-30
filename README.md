@@ -126,7 +126,7 @@ jobs:
 | `mix_env` | string | `dev` | `MIX_ENV` for release |
 | `release_command` | string | `mix git_ops.release --yes` | Release command |
 | `version_override` | string | `""` | Optional bare SemVer override |
-| `preflight_command` | string | `mix hex.audit && mix test` | Validation before release |
+| `preflight_command` | string | `mix hex.audit && MIX_ENV=test mix test` | Validation before release |
 | `release_push_mode` | string | `direct` | `direct` or `pull-request` |
 | `release_notes_mode` | string | `changelog` | `changelog` or `generated` |
 | `dry_run` | boolean | `false` | Run release flow without push, GitHub release, or Hex publish |
