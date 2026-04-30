@@ -22,7 +22,7 @@ It is intentionally practical:
 
 V4.0.0 should ship with:
 
-- `elixir-ci.yml`
+- `jido-ci.yml`
 - `elixir-quality.yml`
 - `elixir-test.yml`
 - `elixir-release.yml`
@@ -48,17 +48,18 @@ Status:
 Tasks:
 
 1. Finalize the public workflow names:
-   - `elixir-ci.yml`
+   - `jido-ci.yml`
    - `elixir-release.yml`
 2. Finalize v4 public inputs for CI:
    - `otp_versions`
    - `elixir_versions`
    - `quality_mix_env`
    - `test_mix_env`
-   - `postgres`
-   - `postgres_image`
-   - `db_setup_command`
+   - `test_setup_command`
    - `test_command`
+   - `changelog_guard_mode`
+   - `dependency_submission`
+   - `credo_sarif`
    - `writeback`
    - `writeback_command`
    - `writeback_paths`
@@ -126,7 +127,7 @@ Files to create:
 Verification:
 
 1. Add a temporary internal workflow or use local validation to ensure each action accepts inputs.
-2. Confirm no helper action tries to manage service containers.
+2. Confirm no helper action tries to manage job-only concerns such as permissions or matrices.
 3. Confirm cache keys include OS, OTP, Elixir, and `mix.lock` where appropriate.
 
 Exit criteria:
@@ -142,14 +143,12 @@ Goal:
 Tasks:
 
 1. Refactor `.github/workflows/elixir-test.yml` to use the helper actions.
-2. Replace manual PostgreSQL `docker run` lifecycle with `services:`.
+2. Remove database service assumptions from the v4 CI surface.
 3. Keep matrix support for OTP and Elixir versions.
 4. Keep experimental compile support.
-5. Add generic DB setup hook:
-   - `db_setup_command`
-6. Add support for environment injection if needed:
-   - `test_env`
-7. Ensure the workflow is still reusable via `workflow_call`.
+5. Add generic test setup hook:
+   - `test_setup_command`
+6. Ensure the workflow is still reusable via `workflow_call`.
 
 Files to update:
 
@@ -157,14 +156,14 @@ Files to update:
 
 Verification:
 
-1. Run matrix validation on at least one no-DB consumer shape.
-2. Run PostgreSQL validation on at least one DB-backed consumer shape.
+1. Run matrix validation on at least one Jido library consumer shape.
+2. Run `test_setup_command` validation before the test command.
 3. Run experimental compile lane with at least one non-blocking toolchain combination.
 
 Exit criteria:
 
 - tests pass with helper actions
-- Postgres works through `services:`
+- v4 CI has no database-specific inputs
 - no duplicated setup remains in the test workflow
 
 ## Phase 3: Build `elixir-quality.yml`
@@ -177,10 +176,9 @@ Tasks:
 
 1. Create `.github/workflows/elixir-quality.yml`.
 2. Make it use helper actions for setup and bootstrap.
-3. Run explicit tasks instead of a monolithic alias by default:
+3. Run explicit parallel tasks instead of a monolithic alias by default:
    - `mix hex.audit`
    - `mix format --check-formatted`
-   - `mix compile --warnings-as-errors`
    - `mix credo --strict`
    - `mix dialyzer`
    - `mix deps.unlock --check-unused`
@@ -216,7 +214,7 @@ Goal:
 Tasks:
 
 1. Decide whether write-back lives:
-   - directly inside `elixir-ci.yml`, or
+   - directly inside `jido-ci.yml`, or
    - in a dedicated `.github/workflows/elixir-writeback.yml`
 2. Implement write-back inputs:
    - `writeback`
@@ -233,12 +231,13 @@ Tasks:
    - fail clearly if the push credential cannot write
 5. Add narrow concurrency so two write-back runs do not race.
 6. Ensure job permissions are isolated:
+   - `actions: read` for reusable workflow metadata lookup
    - `contents: write`
    - `pull-requests: write` only when needed
 
 Files to create or update:
 
-- `.github/workflows/elixir-writeback.yml` or `.github/workflows/elixir-ci.yml`
+- `.github/workflows/elixir-writeback.yml` or `.github/workflows/jido-ci.yml`
 
 Verification:
 
@@ -252,7 +251,7 @@ Exit criteria:
 - PR-based write-back works end to end
 - direct mode is either proven or explicitly deferred
 
-## Phase 5: Build Public `elixir-ci.yml`
+## Phase 5: Build Public `jido-ci.yml`
 
 Goal:
 
@@ -260,12 +259,14 @@ Goal:
 
 Tasks:
 
-1. Create `.github/workflows/elixir-ci.yml`.
+1. Create `.github/workflows/jido-ci.yml`.
 2. Make it orchestrate:
+   - compile gate
    - policy
    - quality
    - test
    - experimental compile
+   - optional dependency submission
    - optional write-back
    - summary
 3. Keep the public input surface small.
@@ -274,12 +275,11 @@ Tasks:
 6. Ensure job summaries clearly show:
    - versions
    - enabled checks
-   - DB settings
    - write-back outcome
 
 Files to create:
 
-- `.github/workflows/elixir-ci.yml`
+- `.github/workflows/jido-ci.yml`
 
 Verification:
 
@@ -376,9 +376,10 @@ Goal:
 Pilot set:
 
 1. one pure library repo
-2. one DB-backed repo
-3. one repo that needs write-back
-4. one repo that exercises release behavior on protected `main`
+2. one repo using default split quality checks
+3. one repo using `quality_command` migration mode
+4. one repo that needs write-back
+5. one repo that exercises release behavior on protected `main`
 
 Suggested candidates:
 
@@ -460,7 +461,7 @@ Keep the implementation sequence tight and reviewable.
 2. PR 2: refactor `elixir-test.yml`
 3. PR 3: add `elixir-quality.yml`
 4. PR 4: add write-back support
-5. PR 5: add public `elixir-ci.yml`
+5. PR 5: add public `jido-ci.yml`
 6. PR 6: refactor `elixir-release.yml`
 7. PR 7: docs and examples
 8. PR 8+: pilot-repo adoption PRs
@@ -479,7 +480,7 @@ Stop and reassess if any of these happen:
 Do not cut `v4.0.0` until all of these are true:
 
 - helper actions are in place
-- public `elixir-ci.yml` exists and is stable
+- public `jido-ci.yml` exists and is stable
 - `elixir-release.yml` enforces push-before-publish
 - protected-branch release behavior is proven in a real repo
 - PR-based write-back is proven in a real repo

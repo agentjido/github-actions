@@ -1,22 +1,20 @@
 # Jido Ecosystem GitHub Actions
 
-Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem repositories.
-
-> **Note**: This repository is temporarily hosted at `agentjido/github-actions`. It will be transferred to `agentjido/github-actions` once permissions are available. Update workflow references accordingly after transfer.
+Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem.
 
 ## Workflows
 
-| Workflow | Purpose | Typical Duration |
-|----------|---------|------------------|
-| `elixir-lint.yml` | Code quality checks (format, compile, credo, dialyzer) | < 5 min |
-| `elixir-test.yml` | Test execution with optional PostgreSQL | < 8 min |
-| `elixir-release.yml` | Automated releases via git_ops | < 3 min |
+| Workflow | Purpose | Public API |
+| --- | --- | --- |
+| `jido-ci.yml` | Default Jido CI: compile gate, split quality jobs, test matrix, optional policy/write-back jobs | Yes |
+| `elixir-release.yml` | Protected-branch-safe git_ops releases, Hex publish, and GitHub releases | Yes |
+| `elixir-quality.yml` | Internal quality building block used by `jido-ci.yml` | No |
+| `elixir-test.yml` | Internal test building block used by `jido-ci.yml` | No |
+| `elixir-lint.yml` | Legacy v3 lint workflow | No new v4 adoption |
 
 ## Quick Start
 
-### CI Workflow (Lint + Test)
-
-Create `.github/workflows/ci.yml` in your repository:
+Create `.github/workflows/ci.yml`:
 
 ```yaml
 name: CI
@@ -28,30 +26,45 @@ on:
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
-  lint:
-    name: Lint
-    uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3
-
-  test:
-    name: Test
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v3
+  ci:
+    name: CI
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
+    secrets: inherit
 ```
 
-### With PostgreSQL
+For migration from an existing repo-specific `mix quality` alias:
 
 ```yaml
 jobs:
-  test:
-    name: Test
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v3
+  ci:
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
+    secrets: inherit
     with:
-      postgres: true
+      quality_command: mix quality
 ```
 
-### Release Workflow
+For write-back automation:
+
+```yaml
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  ci:
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
+    secrets: inherit
+    with:
+      writeback: true
+      writeback_command: mix format
+      writeback_paths: "."
+      writeback_branch_mode: pull-request
+```
 
 Create `.github/workflows/release.yml`:
 
@@ -62,72 +75,96 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
+  pull-requests: write
 
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v3
+    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v4
     secrets: inherit
-    with:
-      # Optional: bypass commit-derived versioning and force an exact bare SemVer version
-      version_override: 1.2.3
 ```
 
-## Workflow Inputs
-
-### elixir-lint.yml
+## `jido-ci.yml` Inputs
 
 | Input | Type | Default | Description |
-|-------|------|---------|-------------|
-| `otp_version` | string | - | OTP version (if no .tool-versions) |
-| `elixir_version` | string | - | Elixir version (if no .tool-versions) |
-| `version_file` | string | `.tool-versions` | Path to version file |
-| `mix_env` | string | `test` | MIX_ENV for compilation |
-| `lint_command` | string | `mix quality` | Command to run for linting |
+| --- | --- | --- | --- |
+| `quality_otp_version` | string | `28` | OTP version for compile and quality jobs |
+| `quality_elixir_version` | string | `1.19` | Elixir version for compile and quality jobs |
+| `quality_mix_env` | string | `dev` | `MIX_ENV` for quality and write-back jobs |
+| `otp_versions` | string | `["27", "28"]` | JSON array for the test matrix |
+| `elixir_versions` | string | `["1.18", "1.19"]` | JSON array for the test matrix |
+| `experimental_compile_elixir_versions` | string | `[]` | Non-blocking compile-only Elixir versions |
+| `experimental_compile_otp_versions` | string | `""` | Optional OTP matrix for experimental compile jobs |
+| `experimental_compile_otp_name` | string | `""` | Optional display label for experimental OTP versions |
+| `test_mix_env` | string | `test` | `MIX_ENV` for tests |
+| `test_setup_command` | string | `""` | Optional command before tests |
+| `test_command` | string | `mix test` | Test command |
+| `quality_command` | string | `""` | Full replacement quality command for migration |
+| `changelog_guard` | boolean | `true` | Enable CHANGELOG.md PR policy |
+| `changelog_guard_mode` | string | `no_changes` | `no_changes` or `no_unreleased` |
+| `validate_hex_package` | boolean | `true` | Run `mix hex.publish --dry-run` on PRs |
+| `docs` | boolean | `false` | Run docs build |
+| `docs_command` | string | `mix docs` | Docs build command |
+| `sobelow` | boolean | `false` | Run Sobelow |
+| `sobelow_command` | string | `mix sobelow` | Sobelow command |
+| `conventional_commits` | boolean | `false` | Validate current commit message with git_ops |
+| `conventional_commit_command` | string | `mix git_ops.check_message` | Conventional commit command |
+| `dependency_submission` | boolean | `false` | Submit dependency graph data on default-branch pushes |
+| `credo_sarif` | boolean | `false` | Upload Credo SARIF to code scanning |
+| `writeback` | boolean | `false` | Enable automated write-back |
+| `writeback_command` | string | `""` | Command that produces write-back changes |
+| `writeback_paths` | string | `.` | Space-delimited pathspecs eligible for write-back commits |
+| `writeback_commit_message` | string | `ci: apply automated write-back` | Write-back commit message |
+| `writeback_branch_mode` | string | `pull-request` | `pull-request` or `direct` |
 
-### elixir-test.yml
+## `elixir-release.yml` Inputs
 
 | Input | Type | Default | Description |
-|-------|------|---------|-------------|
-| `otp_version` | string | - | OTP version (if no .tool-versions) |
-| `elixir_version` | string | - | Elixir version (if no .tool-versions) |
-| `version_file` | string | `.tool-versions` | Path to version file |
-| `mix_env` | string | `test` | MIX_ENV for tests |
-| `test_command` | string | `mix test` | Command to run tests |
-| `postgres` | boolean | `false` | Enable PostgreSQL service |
-| `postgres_image` | string | `postgres:16-alpine` | PostgreSQL Docker image |
-
-### elixir-release.yml
-
-| Input | Type | Default | Description |
-|-------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `otp_version` | string | `28` | OTP version |
 | `elixir_version` | string | `1.18` | Elixir version |
-| `mix_env` | string | `dev` | MIX_ENV for release |
+| `mix_env` | string | `dev` | `MIX_ENV` for release |
 | `release_command` | string | `mix git_ops.release --yes` | Release command |
-| `version_override` | string | `''` | Optional explicit bare SemVer override passed to `mix git_ops.release --override` |
-| `dry_run` | boolean | `false` | Run the release flow without push, GitHub release, or Hex publish |
-| `hex_dry_run` | boolean | `false` | Perform a Hex dry run while still running the git release steps |
-| `skip_tests` | boolean | `false` | Skip `mix test` before releasing |
+| `version_override` | string | `""` | Optional bare SemVer override |
+| `preflight_command` | string | `mix hex.audit && mix test` | Validation before release |
+| `db_setup_command` | string | `""` | Optional release preflight setup command |
+| `database_url` | string | `""` | Optional release preflight `DATABASE_URL` |
+| `release_push_mode` | string | `direct` | `direct` or `pull-request` |
+| `release_notes_mode` | string | `changelog` | `changelog` or `generated` |
+| `dry_run` | boolean | `false` | Run release flow without push, GitHub release, or Hex publish |
+| `hex_dry_run` | boolean | `false` | Push git release state but run Hex dry-run instead of publish |
+| `skip_preflight` | boolean | `false` | Skip preflight validation |
+| `skip_tests` | boolean | `false` | Backward-compatible alias for skipping preflight |
 
 ## Version Pinning
 
-- **`@v3`**: Recommended for most users. This is the floating v3 compatibility channel and receives backward-compatible updates.
-- **`@v3.1.3`**: Pin to an exact release for maximum stability and reproducibility.
-- **`@main`**: Not recommended for production consumers because it is not a stable release ref.
+- `@v4`: Recommended for compatible automatic updates after v4 is released.
+- `@v4.0.0`: Pin to an exact release for maximum reproducibility.
+- `@main`: Not recommended for production consumers.
 
 ```yaml
-# Recommended: Get compatible updates
-uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3
-
-# Exact version pinning
-uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3.1.3
+uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
+uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4.0.0
 ```
 
 These refs are git refs on this repository, so they version the entire workflow repo rather than an individual workflow file.
 
-## Maintainer Release Contract
+## Permissions
+
+The default CI path needs `actions: read` and `contents: read`. The workflow
+uses the Actions API to resolve the reusable workflow repository and ref for
+its internal helper checkout.
+
+Opt-in features need additional permissions in the consumer workflow:
+
+- `dependency_submission: true` needs `contents: write`.
+- `credo_sarif: true` needs `security-events: write`.
+- `writeback: true` needs `contents: write` and `pull-requests: write`.
+- direct protected-branch write-back needs a token or GitHub App that branch rules allow to push.
+
+## Release Contract
 
 - Publish a new exact `vX.Y.Z` tag for every downstream-facing workflow change.
 - Treat published exact tags as immutable.
@@ -135,51 +172,19 @@ These refs are git refs on this repository, so they version the entire workflow 
 - Cut a new major instead of moving the current one if a change would break existing `@vX` consumers.
 - Keep `README.md` and `AGENTS.md` aligned whenever release guidance changes.
 
-### Maintainer Release Checklist
+## Release Prerequisites
 
-1. Validate the change in at least one consumer repo using a branch ref, exact tag candidate, or commit SHA.
-2. Merge the change to `main`.
-3. Create an annotated release tag on the release commit:
-   `git tag -a vX.Y.Z -m "vX.Y.Z"`
-4. Push the exact release tag:
-   `git push origin vX.Y.Z`
-5. If the release is backward compatible, advance the floating major tag to the same commit:
-   `git tag -f vX <release-commit>`
-   `git push origin refs/tags/vX --force`
-6. If the release is breaking, leave the old major tag in place and publish a new major line.
-
-## Prerequisites
-
-### For Lint Workflow
-
-Your repository needs a `mix quality` alias in `mix.exs`:
+Consumer repositories need `git_ops` configured:
 
 ```elixir
-defp aliases do
-  [
-    quality: [
-      "format --check-formatted",
-      "compile --warnings-as-errors",
-      "credo --strict",
-      "dialyzer"
-    ]
-  ]
-end
-```
-
-### For Release Workflow
-
-Your repository needs `git_ops` configured:
-
-```elixir
-# mix.exs
 defp deps do
   [
     {:git_ops, "~> 2.9", only: :dev, runtime: false}
   ]
 end
+```
 
-# config/config.exs
+```elixir
 if config_env() != :prod do
   config :git_ops,
     mix_project: Mix.Project.get!(),
@@ -190,35 +195,13 @@ if config_env() != :prod do
 end
 ```
 
-## Caching
-
-All workflows implement intelligent caching:
-
-- **Cache key**: `{os}-mix-{job}-{mix.lock hash}-{.tool-versions hash}`
-- **Cached paths**: `deps/`, `_build/`, `~/.mix`, `~/.hex`
-- **Dialyzer PLT**: Cached separately for lint workflow
-
-Cache misses are logged for debugging.
-
 ## Consumer Repositories
 
-This workflow repository serves the following Jido ecosystem repos:
-
-- [jido](https://github.com/agentjido/jido) - Core framework
-- [jido_action](https://github.com/agentjido/jido_action) - Action system
-- [jido_signal](https://github.com/agentjido/jido_signal) - Signal processing
-- [jido_workbench](https://github.com/agentjido/jido_workbench) - Development workbench
-- [req_llm](https://github.com/agentjido/req_llm) - LLM integration
-- [llm_db](https://github.com/agentjido/llm_db) - LLM database
-
-## Contributing
-
-1. Fork this repository
-2. Create a feature branch
-3. Make changes to workflow files
-4. Test in a consumer repository
-5. If the change affects downstream consumers, follow the maintainer release contract above
-6. Submit a pull request
+- [jido](https://github.com/agentjido/jido)
+- [jido_action](https://github.com/agentjido/jido_action)
+- [jido_signal](https://github.com/agentjido/jido_signal)
+- [req_llm](https://github.com/agentjido/req_llm)
+- [llm_db](https://github.com/agentjido/llm_db)
 
 ## License
 

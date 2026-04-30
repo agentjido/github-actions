@@ -25,7 +25,7 @@ This plan assumes the Jido ecosystem continues to standardize on:
 - Provide a thorough Elixir CI baseline, not a minimal smoke test.
 - Treat the workflows in this repo as a versioned platform with a stable public API.
 - Make secure defaults the standard path.
-- Support current Jido library repos first, while leaving room for Phoenix, Ash, and DB-backed repos.
+- Support current Jido library repos first, while leaving DB-backed CI to repo-local workflows or a later opt-in workflow.
 - Prepare a clean future path for CLA signoff without forcing it into the initial v4 cut.
 - Support CI-driven write-back workflows such as formatting, codegen, lockfile refreshes, or release
   metadata updates.
@@ -52,7 +52,7 @@ The frozen public input contract lives in [V4_API.md](/Users/mhostetler/Source/O
 
 V4 should publish three consumer-facing workflows.
 
-### 1. `elixir-ci.yml`
+### 1. `jido-ci.yml`
 
 This is the recommended default entrypoint for nearly every Jido repo and the
 main public API surface for CI.
@@ -78,14 +78,12 @@ on:
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   ci:
-    uses: agentjido/github-actions/.github/workflows/elixir-ci.yml@v4
-    with:
-      postgres: true
-      db_setup_command: mix ecto.setup
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
 ```
 
 This workflow must support two operating modes:
@@ -107,6 +105,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -150,7 +149,7 @@ V4 should use this internal structure:
 
 Recommended layout:
 
-- `.github/workflows/elixir-ci.yml`
+- `.github/workflows/jido-ci.yml`
 - `.github/workflows/elixir-quality.yml`
 - `.github/workflows/elixir-test.yml`
 - `.github/workflows/elixir-release.yml`
@@ -166,9 +165,8 @@ Recommended layout:
 Notes:
 
 - composite actions should own repeated setup logic
-- reusable workflows should own job topology, permissions, services, matrices, and summaries
-- service containers should stay in workflows, not composite actions
-- only `elixir-ci.yml` and `elixir-release.yml` should be documented as stable public entrypoints
+- reusable workflows should own job topology, permissions, matrices, and summaries
+- only `jido-ci.yml` and `elixir-release.yml` should be documented as stable public entrypoints
 - write-back logic should live in a dedicated reusable workflow or dedicated job block, not mixed
   invisibly into the normal read-only validation path
 
@@ -176,14 +174,15 @@ Notes:
 
 ### Recommended CI Topology
 
-`elixir-ci.yml` should orchestrate these jobs:
+`jido-ci.yml` should orchestrate these jobs:
 
-1. `policy`
-2. `quality`
-3. `test`
-4. `experimental-compile` (optional)
-5. `writeback` (optional)
-6. `summary`
+1. `resolve-platform`
+2. `compile`
+3. `quality`
+4. `test`
+5. `dependency-submission` (optional)
+6. `writeback` (optional)
+7. `summary`
 
 ### `policy` Job
 
@@ -193,6 +192,7 @@ Initial scope:
 
 - changelog guard for PRs
 - optional conventional commit validation
+- optional dependency submission on default-branch pushes
 - optional future repo hygiene checks
 
 Do not put CLA here. CLA should remain in its own workflow because it likely needs
@@ -205,7 +205,6 @@ This should be the best-practice Elixir quality lane for one primary toolchain.
 Default tasks should be explicit and opinionated:
 
 - `mix format --check-formatted`
-- `mix compile --warnings-as-errors`
 - `mix credo --strict`
 - `mix dialyzer`
 - `mix deps.unlock --check-unused`
@@ -213,6 +212,7 @@ Default tasks should be explicit and opinionated:
 - optional `mix sobelow`
 - optional `mix docs`
 - optional `mix hex.publish --dry-run`
+- optional Credo SARIF upload
 
 V4 should prefer explicit tasks over a single `mix quality` alias as the internal default.
 
@@ -238,28 +238,15 @@ Defaults:
 - matrix on OTP and Elixir versions
 - `fail-fast: false`
 - Linux runner
-- optional PostgreSQL service container
-- generic database setup hook before tests
+- optional generic setup hook before tests
 
 Key inputs:
 
 - `otp_versions`
 - `elixir_versions`
 - `mix_env`
+- `test_setup_command`
 - `test_command`
-- `postgres`
-- `postgres_image`
-- `db_setup_command`
-- `test_env`
-
-V4 should switch to GitHub `services:` for PostgreSQL rather than manual `docker run`.
-
-Reasons:
-
-- simpler workflow code
-- better integration with GitHub Actions networking
-- less manual lifecycle management
-- fewer opportunities for cleanup bugs
 
 ### `experimental-compile` Job
 
@@ -284,7 +271,6 @@ Add a final summary job that always runs and writes a concise result to `GITHUB_
 It should collect:
 
 - versions tested
-- optional DB settings
 - which optional checks were enabled
 - release-readiness signals such as Hex dry run or docs check
 
@@ -416,7 +402,7 @@ That should not be part of the default blocking PR path.
 
 Recommended approach:
 
-- keep the standard `elixir-ci.yml` deterministic
+- keep the standard `jido-ci.yml` deterministic
 - add a later optional scheduled workflow for dependency freshness
 - run `mix deps.unlock --all`, compile, and test on a schedule such as nightly or weekly
 
@@ -444,6 +430,7 @@ stable.
 - Elevate permissions per job only when necessary.
 - Examples:
   - `contents: read` for normal CI
+  - `actions: read` for resolving reusable workflow metadata
   - `security-events: write` only for SARIF uploads
   - `contents: write` only for write-back, release, or CLA signature storage
   - `pull-requests: write` only when the workflow opens or updates automation PRs
@@ -727,8 +714,9 @@ For repos that need write-back, the default consumer experience should still sta
 ```yaml
 jobs:
   ci:
-    uses: agentjido/github-actions/.github/workflows/elixir-ci.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
     permissions:
+      actions: read
       contents: write
       pull-requests: write
     with:
@@ -755,7 +743,7 @@ required:
 
 - add `elixir-quality.yml`
 - refactor `elixir-test.yml`
-- add public `elixir-ci.yml` wrapper
+- add public `jido-ci.yml` wrapper
 - add explicit `writeback` job support
 - document the new recommended consumer usage
 
@@ -774,7 +762,8 @@ required:
 Pilot v4 in a small set of repos:
 
 - one pure library repo
-- one DB-backed repo
+- one repo using the default split quality path
+- one repo using the `quality_command` migration path
 - one repo with the most release complexity
 
 Suggested candidates:
@@ -805,10 +794,9 @@ Pilot both governance models:
 
 V4 is ready when all of the following are true:
 
-- a consumer repo can adopt CI with a single `uses: .../elixir-ci.yml@v4`
+- a consumer repo can adopt CI with a single `uses: .../jido-ci.yml@v4`
 - a consumer repo can adopt releases with a single `uses: .../elixir-release.yml@v4`
 - internal workflow setup logic is no longer duplicated across files
-- PostgreSQL support uses service containers
 - third-party actions are pinned to SHAs internally
 - release secrets can be protected by GitHub Environment approvals
 - README and AGENTS document the public v4 contract
@@ -828,10 +816,10 @@ V4 is ready when all of the following are true:
 ## Recommended Next Implementation Order
 
 1. Build shared composite actions for setup and dependency bootstrap.
-2. Refactor `elixir-test.yml` to use service containers and generic DB setup hooks.
-3. Create `elixir-quality.yml` with explicit best-practice checks.
+2. Refactor `elixir-test.yml` to use generic test setup hooks.
+3. Create `elixir-quality.yml` with explicit, parallel best-practice checks.
 4. Add `elixir-writeback.yml` or equivalent dedicated write-back job design.
-5. Create the public `elixir-ci.yml` wrapper.
+5. Create the public `jido-ci.yml` wrapper with a compile gate.
 6. Refactor `elixir-release.yml` around shared helpers and protected environment use.
 7. Pilot v4 in two consumer repos.
 8. Add `cla-check.yml` as a follow-on release.
@@ -846,8 +834,6 @@ V4 is ready when all of the following are true:
   [docs.github.com/en/actions/configuring-and-managing-workflows/authenticating-with-the-github_token](https://docs.github.com/en/actions/configuring-and-managing-workflows/authenticating-with-the-github_token)
 - GitHub Actions security hardening and SHA pinning:
   [docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions)
-- GitHub PostgreSQL service containers:
-  [docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers)
 - Hex `mix hex.publish`:
   [hexdocs.pm/hex/Mix.Tasks.Hex.Publish.html](https://hexdocs.pm/hex/Mix.Tasks.Hex.Publish.html)
 - Hex `mix hex.audit`:

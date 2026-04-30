@@ -1,7 +1,7 @@
 # Reusable Elixir Test Workflow
-# Usage: uses: agentjido/github-actions/.github/workflows/elixir-test.yml@main
+# Internal building block for .github/workflows/jido-ci.yml.
 #
-# Supports version matrix testing via otp_versions and elixir_versions inputs (JSON arrays)
+# Supports version matrix testing via otp_versions and elixir_versions inputs.
 
 name: Elixir Test
 
@@ -38,31 +38,16 @@ on:
         required: false
         type: string
         default: 'test'
+      test_setup_command:
+        description: 'Optional command to run before tests'
+        required: false
+        type: string
+        default: ''
       test_command:
         description: 'Command to run tests'
         required: false
         type: string
         default: 'mix test'
-      postgres:
-        description: 'Enable PostgreSQL service'
-        required: false
-        type: boolean
-        default: false
-      postgres_image:
-        description: 'PostgreSQL Docker image'
-        required: false
-        type: string
-        default: 'postgres:16-alpine'
-      db_setup_command:
-        description: 'Optional command to prepare the database before tests'
-        required: false
-        type: string
-        default: 'mix ecto.setup'
-      database_url:
-        description: 'Optional explicit DATABASE_URL for db_setup_command'
-        required: false
-        type: string
-        default: ''
       workflow_platform_repository:
         description: 'Internal workflow platform repository'
         required: true
@@ -92,29 +77,8 @@ jobs:
         otp: ${{ fromJson(inputs.otp_versions) }}
         elixir: ${{ fromJson(inputs.elixir_versions) }}
 
-    services:
-      postgres:
-        image: ${{ inputs.postgres && inputs.postgres_image || '' }}
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d test_db"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
     env:
       MIX_ENV: ${{ inputs.mix_env }}
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: test_db
 
     steps:
       - name: Checkout code
@@ -156,18 +120,14 @@ jobs:
           set -euo pipefail
           mix compile --warnings-as-errors
 
-      - name: Setup database
-        if: ${{ inputs.postgres && inputs.db_setup_command != '' }}
+      - name: Run test setup
+        if: ${{ inputs.test_setup_command != '' }}
         shell: bash
         env:
-          DATABASE_URL: ${{ inputs.database_url }}
-          DB_SETUP_COMMAND: ${{ inputs.db_setup_command }}
+          TEST_SETUP_COMMAND: ${{ inputs.test_setup_command }}
         run: |
           set -euo pipefail
-          if [ -z "$DATABASE_URL" ]; then
-            export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
-          fi
-          bash -lc "$DB_SETUP_COMMAND"
+          bash -lc "$TEST_SETUP_COMMAND"
 
       - name: Run tests
         shell: bash

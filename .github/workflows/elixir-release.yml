@@ -88,6 +88,7 @@ jobs:
       group: release-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: write
       pull-requests: write
     steps:
@@ -280,8 +281,41 @@ jobs:
           set -euo pipefail
           git push --atomic origin HEAD "refs/tags/${RELEASE_VERSION}"
 
+      - name: Publish to Hex.pm
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true }}
+        shell: bash
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.dry_run }}" = "true" ] || [ "${{ inputs.hex_dry_run }}" = "true" ]; then
+            mix hex.publish --dry-run
+          else
+            mix hex.publish --yes
+          fi
+
+      - name: Check Hex package version
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.hex_dry_run != true }}
+        id: hex-check
+        shell: bash
+        env:
+          PACKAGE: ${{ github.event.repository.name }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          bare_version="${RELEASE_VERSION#v}"
+          mix local.hex --if-missing --force
+          if mix hex.info "$PACKAGE" "$bare_version" > /dev/null 2>&1; then
+            echo "on-hex=true" >> "$GITHUB_OUTPUT"
+            echo "Confirmed $PACKAGE@$bare_version exists on Hex.pm."
+          else
+            echo "on-hex=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::$PACKAGE@$bare_version was not found on Hex.pm; skipping GitHub release creation."
+          fi
+
       - name: Extract changelog notes
-        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.release_notes_mode == 'changelog' }}
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.hex_dry_run != true && inputs.release_notes_mode == 'changelog' && steps.hex-check.outputs.on-hex == 'true' }}
         id: release-notes
         shell: bash
         env:
@@ -310,22 +344,8 @@ jobs:
             rm -f release_notes.md
           fi
 
-      - name: Publish to Hex.pm
-        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' }}
-        shell: bash
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-          MIX_ENV: ${{ inputs.mix_env }}
-        run: |
-          set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ] || [ "${{ inputs.hex_dry_run }}" = "true" ]; then
-            mix hex.publish --dry-run
-          else
-            mix hex.publish --yes
-          fi
-
       - name: Create GitHub release with changelog notes
-        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.release_notes_mode == 'changelog' && steps.release-notes.outputs.has-notes == 'true' }}
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && inputs.release_notes_mode == 'changelog' && steps.release-notes.outputs.has-notes == 'true' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
@@ -337,7 +357,7 @@ jobs:
             --notes-file release_notes.md
 
       - name: Create GitHub release with generated notes
-        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && (inputs.release_notes_mode == 'generated' || steps.release-notes.outputs.has-notes != 'true') }}
+        if: ${{ steps.release.outputs.skipped != 'true' && inputs.release_push_mode == 'direct' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && (inputs.release_notes_mode == 'generated' || steps.release-notes.outputs.has-notes != 'true') }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}

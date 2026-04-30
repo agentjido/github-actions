@@ -7,7 +7,7 @@ implementation is still on the `feat/v4-workflow-platform` branch.
 
 The public, supported v4 workflows are:
 
-- `.github/workflows/elixir-ci.yml`
+- `.github/workflows/jido-ci.yml`
 - `.github/workflows/elixir-release.yml`
 
 The following workflows are internal building blocks and are not part of the
@@ -23,14 +23,14 @@ workflows is a breaking change.
 
 ## CI Defaults
 
-`elixir-ci.yml` is the default consumer entrypoint.
+`jido-ci.yml` is the default consumer entrypoint.
 
-It is intentionally opinionated. When `quality_command` is not set, the quality
-lane runs these explicit checks:
+It is intentionally opinionated. When `quality_command` is not set, the workflow
+runs a compile gate and then fans out these explicit checks:
 
+- `mix compile --warnings-as-errors`
 - `mix hex.audit`
 - `mix format --check-formatted`
-- `mix compile --warnings-as-errors`
 - `mix credo --strict`
 - `mix dialyzer`
 - `mix deps.unlock --check-unused`
@@ -48,7 +48,7 @@ thorough.
 repos that already define their own quality alias. It replaces the explicit
 default sequence and should be used sparingly.
 
-## `elixir-ci.yml`
+## `jido-ci.yml`
 
 ### Stable Inputs
 
@@ -63,13 +63,11 @@ default sequence and should be used sparingly.
 | `experimental_compile_otp_versions` | string | `""` | Optional JSON array of OTP versions for experimental compile jobs |
 | `experimental_compile_otp_name` | string | `""` | Optional display label for experimental compile OTP versions |
 | `test_mix_env` | string | `"test"` | `MIX_ENV` for the test lane |
+| `test_setup_command` | string | `""` | Optional command to run before tests |
 | `test_command` | string | `"mix test"` | Main test command |
-| `postgres` | boolean | `false` | Enable a PostgreSQL service in the test lane |
-| `postgres_image` | string | `"postgres:16-alpine"` | PostgreSQL image for service-backed tests |
-| `db_setup_command` | string | `"mix ecto.setup"` | Optional database setup command before tests |
-| `database_url` | string | `""` | Optional explicit `DATABASE_URL` for database setup |
 | `quality_command` | string | `""` | Full replacement quality command |
-| `changelog_guard` | boolean | `true` | Fail PRs that edit `CHANGELOG.md` manually |
+| `changelog_guard` | boolean | `true` | Enable CHANGELOG.md pull request policy |
+| `changelog_guard_mode` | string | `"no_changes"` | CHANGELOG.md policy: `no_changes` or `no_unreleased` |
 | `validate_hex_package` | boolean | `true` | Run `mix hex.publish --dry-run` on pull requests |
 | `docs` | boolean | `false` | Build docs in the quality lane |
 | `docs_command` | string | `"mix docs"` | Documentation build command |
@@ -77,6 +75,8 @@ default sequence and should be used sparingly.
 | `sobelow_command` | string | `"mix sobelow"` | Sobelow command |
 | `conventional_commits` | boolean | `false` | Validate the current commit message with `git_ops` |
 | `conventional_commit_command` | string | `"mix git_ops.check_message"` | Conventional commit validation command |
+| `dependency_submission` | boolean | `false` | Submit dependency graph data on default-branch pushes |
+| `credo_sarif` | boolean | `false` | Upload Credo SARIF results to code scanning |
 | `writeback` | boolean | `false` | Enable write-back after validation succeeds |
 | `writeback_command` | string | `""` | Command that produces write-back changes |
 | `writeback_paths` | string | `"."` | Space-delimited pathspecs eligible for commit |
@@ -92,11 +92,12 @@ default sequence and should be used sparingly.
 
 ### Stable Behavior
 
-- `quality`, `test`, and `summary` are the standard CI path.
+- `compile`, `quality`, `test`, and `summary` are the standard CI path.
+- default quality checks run as separate jobs for clearer failures and better parallelism.
 - `writeback` is opt-in and only runs on pushes to the default branch.
 - the experimental compile lane is non-blocking
-- PostgreSQL uses GitHub Actions `services:`
-- the public workflow is read-only unless write-back is explicitly enabled
+- dependency submission, Credo SARIF, and write-back require explicit opt-in and elevated consumer permissions.
+- the standard public workflow needs only `actions: read` and `contents: read`; opt-in features add write permissions.
 
 ## `elixir-release.yml`
 
@@ -131,7 +132,8 @@ default sequence and should be used sparingly.
 - no Hex publish happens before the release commit and tag are pushed in direct mode
 - `pull-request` mode prepares the release branch and PR, then stops
 - `direct` mode is the full push and publish path
-- GitHub release creation happens after the git state is durable on origin
+- GitHub release creation happens after the git state is durable on origin and the package version is visible on Hex.pm.
+- `dry_run` and `hex_dry_run` never create a GitHub release.
 
 ## Compatibility Rules
 

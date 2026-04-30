@@ -27,10 +27,15 @@ on:
         type: string
         default: ""
       changelog_guard:
-        description: Block pull requests that modify CHANGELOG.md
+        description: Enable CHANGELOG.md pull request policy
         required: false
         type: boolean
         default: true
+      changelog_guard_mode:
+        description: "CHANGELOG.md policy: no_changes or no_unreleased"
+        required: false
+        type: string
+        default: "no_changes"
       validate_hex_package:
         description: Run mix hex.publish --dry-run on pull requests
         required: false
@@ -66,6 +71,11 @@ on:
         required: false
         type: string
         default: "mix git_ops.check_message"
+      credo_sarif:
+        description: Upload Credo SARIF results to code scanning
+        required: false
+        type: boolean
+        default: false
       workflow_platform_repository:
         description: Internal workflow platform repository
         required: true
@@ -93,21 +103,85 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for CHANGELOG.md modifications
+      - name: Check CHANGELOG.md policy
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
+          CHANGELOG_GUARD_MODE: ${{ inputs.changelog_guard_mode }}
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "${BASE_REF}"
-          if git diff --name-only "FETCH_HEAD...HEAD" | grep -qx 'CHANGELOG.md'; then
-            echo "::error::CHANGELOG.md should not be edited manually because git_ops generates it during releases."
-            exit 1
-          fi
-          echo "No CHANGELOG.md modifications detected."
 
-  quality:
-    name: Quality
+          case "$CHANGELOG_GUARD_MODE" in
+            no_changes)
+              if git diff --name-only "FETCH_HEAD...HEAD" | grep -qx 'CHANGELOG.md'; then
+                echo "::error::CHANGELOG.md should not be edited manually because git_ops generates it during releases."
+                exit 1
+              fi
+              echo "No CHANGELOG.md modifications detected."
+              ;;
+            no_unreleased)
+              if git diff "FETCH_HEAD...HEAD" -- CHANGELOG.md | grep -qE '^\+## \[Unreleased\]'; then
+                echo "::error::Do not add a new CHANGELOG.md Unreleased section; git_ops generates release entries."
+                exit 1
+              fi
+              echo "No new CHANGELOG.md Unreleased section detected."
+              ;;
+            *)
+              echo "::error::Unsupported changelog_guard_mode: $CHANGELOG_GUARD_MODE"
+              exit 1
+              ;;
+          esac
+
+  audit:
+    name: Audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Audit Hex dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mix hex.audit
+
+  custom-quality:
+    name: Custom Quality
+    if: ${{ inputs.quality_command != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -147,14 +221,7 @@ jobs:
           mix-env: ${{ inputs.mix_env }}
           deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
 
-      - name: Audit Hex dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          mix hex.audit
-
       - name: Run custom quality command
-        if: ${{ inputs.quality_command != '' }}
         shell: bash
         env:
           MIX_ENV: ${{ inputs.mix_env }}
@@ -162,24 +229,95 @@ jobs:
           set -euo pipefail
           ${{ inputs.quality_command }}
 
+  format:
+    name: Format
+    if: ${{ inputs.quality_command == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
       - name: Check formatting
-        if: ${{ inputs.quality_command == '' }}
         shell: bash
         run: |
           set -euo pipefail
           mix format --check-formatted
 
-      - name: Compile with warnings as errors
-        if: ${{ inputs.quality_command == '' }}
-        shell: bash
-        env:
-          MIX_ENV: ${{ inputs.mix_env }}
-        run: |
-          set -euo pipefail
-          mix compile --warnings-as-errors
+  credo:
+    name: Credo
+    if: ${{ inputs.quality_command == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
 
       - name: Run Credo
-        if: ${{ inputs.quality_command == '' }}
         shell: bash
         env:
           MIX_ENV: ${{ inputs.mix_env }}
@@ -187,8 +325,105 @@ jobs:
           set -euo pipefail
           mix credo --strict
 
+  credo-sarif:
+    name: Credo SARIF
+    if: ${{ inputs.quality_command == '' && inputs.credo_sarif }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Run Credo SARIF
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          mix credo --format sarif > results.sarif
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@0499de31b99561a6d14a36a5f662c2a54f91beee # v4.31.2
+        with:
+          sarif_file: results.sarif
+          category: credo
+
+  dialyzer:
+    name: Dialyzer
+    if: ${{ inputs.quality_command == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+          restore-plt: "true"
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
       - name: Run Dialyzer
-        if: ${{ inputs.quality_command == '' }}
         shell: bash
         env:
           MIX_ENV: ${{ inputs.mix_env }}
@@ -196,42 +431,95 @@ jobs:
           set -euo pipefail
           mix dialyzer
 
+  unused-deps:
+    name: Unused Deps
+    if: ${{ inputs.quality_command == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
       - name: Check for unused dependencies
-        if: ${{ inputs.quality_command == '' }}
         shell: bash
         run: |
           set -euo pipefail
           mix deps.unlock --check-unused
 
-      - name: Validate conventional commit message
-        if: ${{ inputs.conventional_commits }}
-        shell: bash
-        env:
-          MIX_ENV: test
-        run: |
-          set -euo pipefail
-          ${{ inputs.conventional_commit_command }}
+  hex-package-dry-run:
+    name: Hex Package Dry Run
+    if: ${{ github.event_name == 'pull_request' && inputs.validate_hex_package }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Run Sobelow
-        if: ${{ inputs.sobelow }}
-        shell: bash
-        env:
-          MIX_ENV: ${{ inputs.mix_env }}
-        run: |
-          set -euo pipefail
-          ${{ inputs.sobelow_command }}
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
 
-      - name: Build docs
-        if: ${{ inputs.docs }}
-        shell: bash
-        env:
-          MIX_ENV: dev
-        run: |
-          set -euo pipefail
-          ${{ inputs.docs_command }}
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: dev
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: dev
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
 
       - name: Validate Hex package
-        if: ${{ github.event_name == 'pull_request' && inputs.validate_hex_package }}
         shell: bash
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
@@ -239,3 +527,150 @@ jobs:
         run: |
           set -euo pipefail
           mix hex.publish --dry-run
+
+  docs:
+    name: Docs
+    if: ${{ inputs.docs }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: dev
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: dev
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Build docs
+        shell: bash
+        env:
+          MIX_ENV: dev
+        run: |
+          set -euo pipefail
+          ${{ inputs.docs_command }}
+
+  sobelow:
+    name: Sobelow
+    if: ${{ inputs.sobelow }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Run Sobelow
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          ${{ inputs.sobelow_command }}
+
+  conventional-commits:
+    name: Conventional Commits
+    if: ${{ inputs.conventional_commits }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: test
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: test
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Validate conventional commit message
+        shell: bash
+        env:
+          MIX_ENV: test
+        run: |
+          set -euo pipefail
+          ${{ inputs.conventional_commit_command }}
