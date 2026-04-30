@@ -141,7 +141,6 @@ jobs:
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    continue-on-error: true
 
     permissions:
       contents: read
@@ -191,15 +190,23 @@ jobs:
           deps-cache-hit: ${{ steps.deps-cache.outputs.deps-cache-hit }}
 
       - name: Compile project
+        id: compile
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           mix compile --warnings-as-errors
+          status="$?"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::Experimental compile failed for Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}."
+          fi
+          exit 0
 
       - name: Experimental compile summary
         if: always()
         env:
           EXPERIMENTAL_COMPILE_OTP_NAME: ${{ inputs.experimental_compile_otp_name }}
+          EXPERIMENTAL_COMPILE_STATUS: ${{ steps.compile.outputs.status }}
         run: |
           echo "### Experimental compile lane" >> "$GITHUB_STEP_SUMMARY"
           echo "- Elixir: ${{ matrix.elixir }}" >> "$GITHUB_STEP_SUMMARY"
@@ -207,4 +214,9 @@ jobs:
           if [ -n "$EXPERIMENTAL_COMPILE_OTP_NAME" ]; then
             echo "- OTP label: $EXPERIMENTAL_COMPILE_OTP_NAME" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "- Blocking: no (job uses continue-on-error)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$EXPERIMENTAL_COMPILE_STATUS" = "0" ]; then
+            echo "- Result: passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Result: failed (warning only)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- Blocking: no" >> "$GITHUB_STEP_SUMMARY"
