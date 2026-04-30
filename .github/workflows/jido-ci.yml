@@ -286,9 +286,6 @@ jobs:
     if: ${{ inputs.credo_sarif && inputs.quality_command == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    permissions:
-      contents: read
-      security-events: write
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -341,8 +338,6 @@ jobs:
     name: Dependency Submission
     if: ${{ inputs.dependency_submission && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -359,9 +354,6 @@ jobs:
     if: ${{ inputs.writeback && inputs.writeback_command != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions:
-      contents: write
-      pull-requests: write
     concurrency:
       group: writeback-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false

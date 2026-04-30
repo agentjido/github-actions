@@ -164,6 +164,10 @@ Opt-in features need additional permissions in the consumer workflow:
 - `writeback: true` needs `contents: write` and `pull-requests: write`.
 - direct protected-branch write-back needs a token or GitHub App that branch rules allow to push.
 
+Reusable workflows cannot elevate the caller's token permissions. The standard
+jobs declare read-only permissions; opt-in write jobs inherit the extra scopes
+only when the consumer grants them.
+
 ## Release Contract
 
 - Publish a new exact `vX.Y.Z` tag for every downstream-facing workflow change.

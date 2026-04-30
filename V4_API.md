@@ -97,7 +97,7 @@ default sequence and should be used sparingly.
 - `writeback` is opt-in and only runs on pushes to the default branch.
 - the experimental compile lane is non-blocking
 - dependency submission, Credo SARIF, and write-back require explicit opt-in and elevated consumer permissions.
-- the standard public workflow needs only `actions: read` and `contents: read`; opt-in features add write permissions.
+- the standard public workflow needs only `actions: read` and `contents: read`; opt-in features inherit caller-granted write permissions because reusable workflows cannot elevate the caller token.
 
 ## `elixir-release.yml`
 

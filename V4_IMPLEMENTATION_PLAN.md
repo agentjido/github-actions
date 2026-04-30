@@ -232,8 +232,8 @@ Tasks:
 5. Add narrow concurrency so two write-back runs do not race.
 6. Ensure job permissions are isolated:
    - `actions: read` for reusable workflow metadata lookup
-   - `contents: write`
-   - `pull-requests: write` only when needed
+   - standard validation jobs downscope to read-only
+   - opt-in write jobs inherit caller-granted write scopes because reusable workflows cannot elevate caller permissions
 
 Files to create or update:
 

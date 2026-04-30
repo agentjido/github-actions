@@ -438,6 +438,9 @@ stable.
 Validation jobs and write-back jobs should be permission-separated.
 
 Do not give the entire CI workflow write access when only one job needs it.
+For reusable workflows, the caller's token permissions are the ceiling; opt-in
+write jobs must inherit caller-granted write scopes while validation jobs
+continue to downscope themselves to read-only.
 
 ### Third-Party Action Pinning
 
