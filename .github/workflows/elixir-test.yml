@@ -1,7 +1,7 @@
 # Reusable Elixir Test Workflow
-# Usage: uses: agentjido/github-actions/.github/workflows/elixir-test.yml@main
+# Internal building block for .github/workflows/jido-ci.yml.
 #
-# Supports version matrix testing via otp_versions and elixir_versions inputs (JSON arrays)
+# Supports version matrix testing via otp_versions and elixir_versions inputs.
 
 name: Elixir Test
 
@@ -38,21 +38,29 @@ on:
         required: false
         type: string
         default: 'test'
+      test_setup_command:
+        description: 'Optional command to run before tests'
+        required: false
+        type: string
+        default: ''
       test_command:
         description: 'Command to run tests'
         required: false
         type: string
         default: 'mix test'
-      postgres:
-        description: 'Enable PostgreSQL service'
-        required: false
-        type: boolean
-        default: false
-      postgres_image:
-        description: 'PostgreSQL Docker image'
+      workflow_platform_repository:
+        description: 'Internal workflow platform repository'
+        required: true
+        type: string
+      workflow_platform_ref:
+        description: 'Internal workflow platform ref'
+        required: true
+        type: string
+      workflow_platform_path:
+        description: 'Checkout path for the internal workflow platform'
         required: false
         type: string
-        default: 'postgres:16-alpine'
+        default: '.github-actions-platform'
 
 jobs:
   test:
@@ -71,104 +79,61 @@ jobs:
 
     env:
       MIX_ENV: ${{ inputs.mix_env }}
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: test_db
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Start PostgreSQL
-        if: ${{ inputs.postgres }}
-        run: |
-          docker run -d \
-            --name postgres \
-            -e POSTGRES_USER=$POSTGRES_USER \
-            -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-            -e POSTGRES_DB=$POSTGRES_DB \
-            -p $POSTGRES_PORT:5432 \
-            --health-cmd="pg_isready -U postgres -d test_db" \
-            --health-interval=5s \
-            --health-timeout=3s \
-            --health-retries=20 \
-            ${{ inputs.postgres_image }}
-
-          echo "Waiting for PostgreSQL to be ready..."
-          for i in {1..30}; do
-            if docker exec postgres pg_isready -U $POSTGRES_USER -d $POSTGRES_DB > /dev/null 2>&1; then
-              echo "PostgreSQL is ready after ${i}s"
-              break
-            fi
-            if [ $i -eq 30 ]; then
-              echo "PostgreSQL failed to start within 30 seconds"
-              docker logs postgres
-              exit 1
-            fi
-            sleep 1
-          done
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
 
       - name: Setup Elixir
-        uses: erlef/setup-beam@v1
+        uses: ./.github-actions-platform/.github/actions/setup-beam
         with:
           otp-version: ${{ matrix.otp }}
           elixir-version: ${{ matrix.elixir }}
 
-      - name: Restore Hex/Mix cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.hex
-            ~/.mix
-          key: ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
-
-      - name: Install Hex/Rebar
-        run: |
-          set -euo pipefail
-          mix local.hex --force
-          mix local.rebar --force
-
-      - name: Restore dependencies cache
-        uses: actions/cache@v5
+      - name: Restore caches
         id: deps-cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
         with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ inputs.mix_env }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+          mix-env: ${{ inputs.mix_env }}
 
-      - name: Remove cached rebar3 build artifacts in deps
-        run: |
-          if [ -d deps ]; then
-            find deps -maxdepth 6 -type d \( -name _build -o -name .rebar3 \) -prune -exec rm -rf {} + || true
-            find deps -maxdepth 6 -type f -name rebar3.crashdump -delete || true
-          fi
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
 
       - name: Install dependencies
-        run: mix deps.get
-
-      - name: Compile dependencies
-        run: mix deps.compile
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.deps-cache.outputs.deps-cache-hit }}
 
       - name: Compile project
-        run: mix compile --warnings-as-errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          mix compile --warnings-as-errors
 
-      - name: Setup database
-        if: ${{ inputs.postgres }}
-        run: mix ecto.setup
+      - name: Run test setup
+        if: ${{ inputs.test_setup_command != '' }}
+        shell: bash
         env:
-          DATABASE_URL: postgres://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_DB }}
+          TEST_SETUP_COMMAND: ${{ inputs.test_setup_command }}
+        run: |
+          set -euo pipefail
+          bash -lc "$TEST_SETUP_COMMAND"
 
       - name: Run tests
-        run: ${{ inputs.test_command }}
-
-      - name: Cleanup PostgreSQL
-        if: ${{ inputs.postgres && always() }}
-        run: docker stop postgres && docker rm postgres || true
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ inputs.test_command }}
 
   experimental-compile:
     # GitHub check rendering misformats conditional fallback expressions in reusable workflow job names.
@@ -176,7 +141,6 @@ jobs:
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    continue-on-error: true
 
     permissions:
       contents: read
@@ -192,60 +156,57 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
 
       - name: Setup Elixir
-        uses: erlef/setup-beam@v1
+        uses: ./.github-actions-platform/.github/actions/setup-beam
         with:
           otp-version: ${{ matrix.otp }}
           elixir-version: ${{ matrix.elixir }}
           version-type: strict
 
-      - name: Restore Hex/Mix cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.hex
-            ~/.mix
-          key: ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-beamtools-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
-
-      - name: Install Hex/Rebar
-        run: |
-          set -euo pipefail
-          mix local.hex --force
-          mix local.rebar --force
-
-      - name: Restore dependencies cache
-        uses: actions/cache@v5
+      - name: Restore caches
         id: deps-cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
         with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ inputs.mix_env }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+          mix-env: ${{ inputs.mix_env }}
 
-      - name: Remove cached rebar3 build artifacts in deps
-        run: |
-          if [ -d deps ]; then
-            find deps -maxdepth 6 -type d \( -name _build -o -name .rebar3 \) -prune -exec rm -rf {} + || true
-            find deps -maxdepth 6 -type f -name rebar3.crashdump -delete || true
-          fi
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
 
       - name: Install dependencies
-        run: mix deps.get
-
-      - name: Compile dependencies
-        run: mix deps.compile
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.deps-cache.outputs.deps-cache-hit }}
 
       - name: Compile project
-        run: mix compile --warnings-as-errors
+        id: compile
+        shell: bash
+        run: |
+          set +e
+          mix compile --warnings-as-errors
+          status="$?"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::Experimental compile failed for Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}."
+          fi
+          exit 0
 
       - name: Experimental compile summary
         if: always()
         env:
           EXPERIMENTAL_COMPILE_OTP_NAME: ${{ inputs.experimental_compile_otp_name }}
+          EXPERIMENTAL_COMPILE_STATUS: ${{ steps.compile.outputs.status }}
         run: |
           echo "### Experimental compile lane" >> "$GITHUB_STEP_SUMMARY"
           echo "- Elixir: ${{ matrix.elixir }}" >> "$GITHUB_STEP_SUMMARY"
@@ -253,4 +214,9 @@ jobs:
           if [ -n "$EXPERIMENTAL_COMPILE_OTP_NAME" ]; then
             echo "- OTP label: $EXPERIMENTAL_COMPILE_OTP_NAME" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "- Blocking: no (job uses continue-on-error)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$EXPERIMENTAL_COMPILE_STATUS" = "0" ]; then
+            echo "- Result: passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Result: failed (warning only)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- Blocking: no" >> "$GITHUB_STEP_SUMMARY"

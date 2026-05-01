@@ -1,0 +1,336 @@
+name: Jido Review
+
+on:
+  workflow_call:
+    inputs:
+      post_comment:
+        description: Post or update a sticky PR review comment
+        required: false
+        type: boolean
+        default: true
+      fail_on_error:
+        description: Fail the workflow when review generation or comment publishing fails
+        required: false
+        type: boolean
+        default: false
+      review_config_path:
+        description: Optional repository review configuration path
+        required: false
+        type: string
+        default: ".github/jido-review.yml"
+      max_diff_lines:
+        description: Maximum diff lines included in the review packet
+        required: false
+        type: number
+        default: 2000
+      conventional_commits:
+        description: Check the pull request title against the conventional commit format
+        required: false
+        type: boolean
+        default: true
+      conventional_commit_pattern:
+        description: Regular expression used to validate the pull request title
+        required: false
+        type: string
+        default: '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([A-Za-z0-9_.-]+\))?(!)?: .+'
+      agent_review:
+        description: Enable an optional external agent review command
+        required: false
+        type: boolean
+        default: false
+      agent_review_command:
+        description: Command that consumes the deterministic review packet
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  review:
+    name: Jido Review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Build review packet
+        id: packet
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          REVIEW_CONFIG_PATH: ${{ inputs.review_config_path }}
+          MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+          CONVENTIONAL_COMMITS: ${{ inputs.conventional_commits }}
+          CONVENTIONAL_COMMIT_PATTERN: ${{ inputs.conventional_commit_pattern }}
+        run: |
+          set -euo pipefail
+          mkdir -p .jido-review
+
+          if [ "$EVENT_NAME" != "pull_request" ] || [ -z "$PR_NUMBER" ]; then
+            printf '%s\n' \
+              '<!-- jido-review -->' \
+              '## Jido Review' \
+              '' \
+              'Skipped: Jido Review currently runs only for pull_request callers.' \
+              > .jido-review/jido-review.md
+            jq -n '{status:"skipped", reason:"not_pull_request"}' > .jido-review/jido-review.json
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files_json="$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" | jq -s 'add | map({filename, status, additions, deletions, changes})')"
+          gh pr diff "$PR_NUMBER" --repo "$REPOSITORY" --patch | awk -v max="$MAX_DIFF_LINES" 'NR <= max { print }' > .jido-review/diff.patch || true
+
+          total_files="$(jq 'length' <<<"$files_json")"
+          workflow_files="$(jq '[.[] | select(.filename | test("^\\.github/workflows/.*\\.ya?ml$"))] | length' <<<"$files_json")"
+          package_files="$(jq '[.[] | select(.filename == "mix.exs" or .filename == "mix.lock")] | length' <<<"$files_json")"
+          docs_files="$(jq '[.[] | select(.filename | test("(^docs/|README|\\.md$)"))] | length' <<<"$files_json")"
+          test_files="$(jq '[.[] | select(.filename | test("(^test/|_test\\.exs$|/test/)"))] | length' <<<"$files_json")"
+          source_files="$(jq '[.[] | select(.filename | test("^(lib|config)/"))] | length' <<<"$files_json")"
+          changelog_files="$(jq '[.[] | select(.filename == "CHANGELOG.md")] | length' <<<"$files_json")"
+
+          conventional_commit_valid="skipped"
+          conventional_commit_message="Conventional commit title check disabled."
+          if [ "$CONVENTIONAL_COMMITS" = "true" ]; then
+            if [[ "$PR_TITLE" =~ $CONVENTIONAL_COMMIT_PATTERN ]]; then
+              conventional_commit_valid="true"
+              conventional_commit_message="PR title uses conventional commit format."
+            else
+              conventional_commit_valid="false"
+              conventional_commit_message="PR title should use conventional commit format, for example: ci: pilot v4 shared ci."
+            fi
+          fi
+
+          conventional_commit_json="$(
+            jq -n \
+              --argjson enabled "$CONVENTIONAL_COMMITS" \
+              --arg title "$PR_TITLE" \
+              --arg pattern "$CONVENTIONAL_COMMIT_PATTERN" \
+              --arg valid "$conventional_commit_valid" \
+              --arg message "$conventional_commit_message" \
+              '{
+                enabled: $enabled,
+                title: $title,
+                pattern: $pattern,
+                valid: (if $valid == "true" then true elif $valid == "false" then false else null end),
+                message: $message
+              }'
+          )"
+
+          workflow_risks=()
+          if [ "$workflow_files" -gt 0 ]; then
+            if grep -qE '^\+.*pull_request_target:' .jido-review/diff.patch; then
+              workflow_risks+=("Added pull_request_target trigger; verify it does not checkout or execute untrusted PR code.")
+            fi
+            if grep -qE '^\+.*contents:[[:space:]]*write' .jido-review/diff.patch; then
+              workflow_risks+=("Added contents: write permission.")
+            fi
+            if grep -qE '^\+.*pull-requests:[[:space:]]*write' .jido-review/diff.patch; then
+              workflow_risks+=("Added pull-requests: write permission.")
+            fi
+            if grep -qE '^\+.*secrets:[[:space:]]*inherit' .jido-review/diff.patch; then
+              workflow_risks+=("Added secrets: inherit.")
+            fi
+            if grep -qE '^\+.*uses: .+@[A-Za-z0-9_.-]+[[:space:]]*$' .jido-review/diff.patch; then
+              workflow_risks+=("Added or changed action references; prefer full SHA pins for reusable workflow platform code.")
+            fi
+          fi
+
+          missing_signals=()
+          if [ "$source_files" -gt 0 ] && [ "$test_files" -eq 0 ]; then
+            missing_signals+=("Source/config changed without test file changes.")
+          fi
+          if [ "$source_files" -gt 0 ] && [ "$docs_files" -eq 0 ]; then
+            missing_signals+=("Source/config changed without docs or README changes.")
+          fi
+          if [ "$package_files" -gt 0 ] && [ "$changelog_files" -eq 0 ]; then
+            missing_signals+=("Package metadata changed without CHANGELOG.md changes; this may be expected when git_ops owns changelog entries.")
+          fi
+
+          ci_json="$(gh pr checks "$PR_NUMBER" --repo "$REPOSITORY" --json name,state,bucket,link --jq '.' 2>/dev/null || printf '[]')"
+
+          jq -n \
+            --arg status "ok" \
+            --arg repository "$REPOSITORY" \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg review_config_path "$REVIEW_CONFIG_PATH" \
+            --argjson files "$files_json" \
+            --argjson ci "$ci_json" \
+            --argjson total_files "$total_files" \
+            --argjson workflow_files "$workflow_files" \
+            --argjson package_files "$package_files" \
+            --argjson docs_files "$docs_files" \
+            --argjson test_files "$test_files" \
+            --argjson source_files "$source_files" \
+            --argjson changelog_files "$changelog_files" \
+            --argjson conventional_commit "$conventional_commit_json" \
+            --argjson workflow_risks "$(printf '%s\n' "${workflow_risks[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')" \
+            --argjson missing_signals "$(printf '%s\n' "${missing_signals[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')" \
+            '{
+              status: $status,
+              repository: $repository,
+              pull_request: $pr_number,
+              review_config_path: $review_config_path,
+              summary: {
+                total_files: $total_files,
+                workflow_files: $workflow_files,
+                package_files: $package_files,
+                docs_files: $docs_files,
+                test_files: $test_files,
+                source_files: $source_files,
+                changelog_files: $changelog_files
+              },
+              pr_policy: {
+                conventional_commit: $conventional_commit
+              },
+              workflow_risks: $workflow_risks,
+              missing_signals: $missing_signals,
+              files: $files,
+              ci: $ci
+            }' > .jido-review/jido-review.json
+
+          {
+            echo "<!-- jido-review -->"
+            echo "## Jido Review"
+            echo
+            echo "### Summary"
+            echo
+            echo "- Files changed: $total_files"
+            echo "- Source/config files: $source_files"
+            echo "- Test files: $test_files"
+            echo "- Docs/markdown files: $docs_files"
+            echo "- Package files: $package_files"
+            echo "- Workflow files: $workflow_files"
+            echo
+            echo "### PR Policy"
+            echo
+            if [ "$CONVENTIONAL_COMMITS" != "true" ]; then
+              echo "- Conventional commit title: disabled."
+            elif [ "$conventional_commit_valid" = "true" ]; then
+              echo "- Conventional commit title: pass."
+            else
+              echo "- Conventional commit title: needs attention. Expected a title like \`ci: pilot v4 shared ci\`."
+              echo "- Current title: \`$PR_TITLE\`"
+            fi
+            echo
+            echo "### Workflow Risk Signals"
+            echo
+            if [ "${#workflow_risks[@]}" -eq 0 ]; then
+              echo "- None detected."
+            else
+              printf -- "- %s\n" "${workflow_risks[@]}"
+            fi
+            echo
+            echo "### Missing Signals"
+            echo
+            if [ "${#missing_signals[@]}" -eq 0 ]; then
+              echo "- None detected."
+            else
+              printf -- "- %s\n" "${missing_signals[@]}"
+            fi
+            echo
+            echo "### CI Snapshot"
+            echo
+            if [ "$(jq 'length' <<<"$ci_json")" -eq 0 ]; then
+              echo "- No check data available yet."
+            else
+              jq -r '.[] | "- \(.name): \(.state // .bucket)"' <<<"$ci_json" | sed -n '1,20p'
+            fi
+          } > .jido-review/jido-review.md
+
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run agent review command
+        if: ${{ inputs.agent_review && inputs.agent_review_command != '' && steps.packet.outputs.skipped != 'true' }}
+        shell: bash
+        env:
+          JIDO_REVIEW_JSON: .jido-review/jido-review.json
+          JIDO_REVIEW_MARKDOWN: .jido-review/jido-review.md
+          FAIL_ON_ERROR: ${{ inputs.fail_on_error }}
+        run: |
+          set +e
+          bash -lc "${{ inputs.agent_review_command }}" > .jido-review/agent-review.md 2>&1
+          status=$?
+          set -e
+          {
+            echo
+            echo "### Agent Review"
+            echo
+            cat .jido-review/agent-review.md
+          } >> .jido-review/jido-review.md
+          if [ "$status" -ne 0 ] && [ "$FAIL_ON_ERROR" = "true" ]; then
+            exit "$status"
+          fi
+
+      - name: Publish sticky PR comment
+        if: ${{ inputs.post_comment && github.event_name == 'pull_request' && steps.packet.outputs.skipped != 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          FAIL_ON_ERROR: ${{ inputs.fail_on_error }}
+        run: |
+          set +e
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "Skipping PR comment for forked pull request: $HEAD_REPO"
+            exit 0
+          fi
+
+          existing_id="$(
+            gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
+              --jq '.[] | select(.user.type == "Bot" and (.body | contains("<!-- jido-review -->"))) | .id' \
+              | head -n 1
+          )"
+
+          if [ -n "$existing_id" ]; then
+            gh api \
+              --method PATCH \
+              "repos/$REPOSITORY/issues/comments/$existing_id" \
+              -f body@.jido-review/jido-review.md
+          else
+            gh api \
+              --method POST \
+              "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
+              -f body@.jido-review/jido-review.md
+          fi
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "Unable to publish Jido Review comment. This is advisory unless fail_on_error is true."
+            if [ "$FAIL_ON_ERROR" = "true" ]; then
+              exit "$status"
+            fi
+          fi
+
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: jido-review
+          path: .jido-review/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Write review summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f .jido-review/jido-review.md ]; then
+            cat .jido-review/jido-review.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Jido Review" >> "$GITHUB_STEP_SUMMARY"
+            echo "Review packet was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi

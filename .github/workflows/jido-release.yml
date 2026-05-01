@@ -1,0 +1,486 @@
+name: Jido Release
+
+on:
+  workflow_call:
+    secrets:
+      HEX_API_KEY:
+        required: false
+      RELEASE_TOKEN:
+        required: false
+    inputs:
+      operation:
+        description: "Release operation: auto, prepare, or publish"
+        required: false
+        type: string
+        default: "auto"
+      tag_name:
+        description: Optional v-prefixed tag name for dispatch publish simulation
+        required: false
+        type: string
+        default: ""
+      otp_version:
+        description: OTP version
+        required: false
+        type: string
+        default: "28"
+      elixir_version:
+        description: Elixir version
+        required: false
+        type: string
+        default: "1.18"
+      mix_env:
+        description: MIX_ENV for release preparation and publishing
+        required: false
+        type: string
+        default: "dev"
+      release_command:
+        description: Release preparation command
+        required: false
+        type: string
+        default: "mix git_ops.release --yes"
+      version_override:
+        description: Optional bare SemVer override for git_ops.release
+        required: false
+        type: string
+        default: ""
+      preflight_command:
+        description: Command run before release preparation or publishing
+        required: false
+        type: string
+        default: "mix hex.audit && MIX_ENV=test mix test"
+      release_notes_mode:
+        description: "GitHub release notes mode: changelog or generated"
+        required: false
+        type: string
+        default: "changelog"
+      dry_run:
+        description: Run without pushing, GitHub release creation, or Hex publish
+        required: false
+        type: boolean
+        default: false
+      hex_dry_run:
+        description: Run Hex publish as a dry run
+        required: false
+        type: boolean
+        default: false
+      skip_preflight:
+        description: Skip the preflight command entirely
+        required: false
+        type: boolean
+        default: false
+      skip_tests:
+        description: Backward-compatible alias for skipping preflight validation
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    concurrency:
+      group: release-${{ github.repository }}-${{ github.ref }}-${{ inputs.operation }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Resolve release operation
+        id: mode
+        shell: bash
+        env:
+          OPERATION_INPUT: ${{ inputs.operation }}
+          TAG_NAME_INPUT: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          case "$OPERATION_INPUT" in
+            auto|prepare|publish) ;;
+            *)
+              echo "::error::Unsupported operation: $OPERATION_INPUT"
+              exit 1
+              ;;
+          esac
+
+          operation="$OPERATION_INPUT"
+          if [ "$operation" = "auto" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              operation="publish"
+            else
+              operation="prepare"
+            fi
+          fi
+
+          tag_name="$TAG_NAME_INPUT"
+          if [ "$operation" = "publish" ] && [ -z "$tag_name" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag_name="${GITHUB_REF#refs/tags/}"
+          fi
+
+          if [ "$operation" = "publish" ]; then
+            if [[ ! "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "::error::Publish requires a v-prefixed SemVer tag from github.ref or inputs.tag_name."
+              exit 1
+            fi
+            echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
+            echo "bare_version=${tag_name#v}" >> "$GITHUB_OUTPUT"
+            echo "target_branch=" >> "$GITHUB_OUTPUT"
+          else
+            if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+              echo "::error::Prepare must run from a branch ref."
+              exit 1
+            fi
+            echo "tag_name=" >> "$GITHUB_OUTPUT"
+            echo "bare_version=" >> "$GITHUB_OUTPUT"
+            echo "target_branch=${GITHUB_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "operation=$operation" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release notes mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.release_notes_mode }}" in
+            changelog|generated) ;;
+            *)
+              echo "::error::Unsupported release_notes_mode: ${{ inputs.release_notes_mode }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Require release token for prepare
+        if: ${{ steps.mode.outputs.operation == 'prepare' && inputs.dry_run != true }}
+        shell: bash
+        env:
+          HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_RELEASE_TOKEN" != "true" ]; then
+            echo "::error::Non-dry-run prepare requires RELEASE_TOKEN so pushed tags can trigger tag-publish workflows."
+            exit 1
+          fi
+
+      - name: Require Hex token for publish
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true }}
+        shell: bash
+        env:
+          HAS_HEX_API_KEY: ${{ secrets.HEX_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_HEX_API_KEY" != "true" ]; then
+            echo "::error::Non-dry-run publish requires HEX_API_KEY."
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+
+      - name: Checkout publish tag
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.tag_name != '' }}
+        shell: bash
+        env:
+          TAG_NAME: ${{ steps.mode.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force origin
+          git checkout --detach "refs/tags/$TAG_NAME"
+
+      - name: Resolve workflow platform ref
+        id: platform-ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+          workflow_path="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .path' \
+              | head -n 1
+          )"
+          workflow_ref="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .ref // empty' \
+              | head -n 1
+          )"
+          workflow_sha="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .sha // empty' \
+              | head -n 1
+          )"
+          if [ -z "$workflow_path" ]; then
+            echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
+            exit 1
+          fi
+          echo "repository=${workflow_path%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${workflow_ref:-$workflow_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ steps.platform-ref.outputs.repository }}
+          ref: ${{ steps.platform-ref.outputs.ref }}
+          path: .github-actions-platform
+
+      - name: Disable git hooks
+        shell: bash
+        run: git config core.hooksPath /dev/null
+
+      - name: Configure git
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.otp_version }}
+          elixir-version: ${{ inputs.elixir_version }}
+          mix-env: ${{ inputs.mix_env }}
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: ${{ inputs.mix_env }}
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Run preflight checks
+        if: ${{ inputs.skip_preflight != true && inputs.skip_tests != true }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          bash -lc "${{ inputs.preflight_command }}"
+
+      - name: Prepare release with git_ops
+        id: prepare
+        if: ${{ steps.mode.outputs.operation == 'prepare' }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+        run: |
+          set -euo pipefail
+
+          run_release() {
+            local escaped_args=""
+            if [ "$#" -gt 0 ]; then
+              printf -v escaped_args '%q ' "$@"
+            fi
+            bash -lc "${{ inputs.release_command }} ${escaped_args}"
+          }
+
+          dry_run_log="$(mktemp)"
+          trap 'rm -f "$dry_run_log"' EXIT
+
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            if run_release --override "$VERSION_OVERRIDE" --dry-run >"$dry_run_log" 2>&1; then
+              dry_run_status=0
+            else
+              dry_run_status=$?
+            fi
+          elif run_release --dry-run >"$dry_run_log" 2>&1; then
+            dry_run_status=0
+          else
+            dry_run_status=$?
+          fi
+
+          cat "$dry_run_log"
+
+          if [ -z "$VERSION_OVERRIDE" ] && grep -qE "(No changes since|No changes should result)" "$dry_run_log"; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "No releasable commits found since the last release."
+            exit 0
+          fi
+
+          if [ "$dry_run_status" -ne 0 ]; then
+            exit "$dry_run_status"
+          fi
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "Dry run requested; skipping release commit, tag, Hex publish, and GitHub release."
+            exit 0
+          fi
+
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            run_release --override "$VERSION_OVERRIDE"
+          else
+            run_release
+          fi
+
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: Extract prepared release version
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true }}
+        id: prepared-version
+        uses: ./.github-actions-platform/.github/actions/extract-version
+
+      - name: Push prepared release commit and tag
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true }}
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.prepared-version.outputs.version }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
+        run: |
+          set -euo pipefail
+          git push --atomic origin "HEAD:refs/heads/${TARGET_BRANCH}" "refs/tags/${RELEASE_VERSION}"
+
+      - name: Validate publish tag matches package version
+        if: ${{ steps.mode.outputs.operation == 'publish' }}
+        id: package-version
+        shell: bash
+        env:
+          TAG_NAME: ${{ steps.mode.outputs.tag_name }}
+          BARE_VERSION: ${{ steps.mode.outputs.bare_version }}
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          package_version="$(
+            mix eval 'Mix.Project.get!().project()[:version] |> IO.puts()' \
+              | tail -n 1 \
+              | tr -d '[:space:]'
+          )"
+          if [ "$package_version" != "$BARE_VERSION" ]; then
+            echo "::error::Tag $TAG_NAME resolves to $BARE_VERSION, but mix.exs version is $package_version."
+            exit 1
+          fi
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "Validated $TAG_NAME matches package version $package_version."
+
+      - name: Publish to Hex.pm
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true }}
+        shell: bash
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.hex_dry_run }}" = "true" ]; then
+            HEX_API_KEY="${HEX_API_KEY:-dry-run}" mix hex.publish --dry-run --yes
+          else
+            mix hex.publish --yes
+          fi
+
+      - name: Check Hex package version
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true }}
+        id: hex-check
+        shell: bash
+        env:
+          PACKAGE: ${{ github.event.repository.name }}
+          BARE_VERSION: ${{ steps.mode.outputs.bare_version }}
+        run: |
+          set -euo pipefail
+          mix local.hex --if-missing --force
+          if mix hex.info "$PACKAGE" "$BARE_VERSION" > /dev/null 2>&1; then
+            echo "on-hex=true" >> "$GITHUB_OUTPUT"
+            echo "Confirmed $PACKAGE@$BARE_VERSION exists on Hex.pm."
+          else
+            echo "on-hex=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::$PACKAGE@$BARE_VERSION was not found on Hex.pm; skipping GitHub release creation."
+          fi
+
+      - name: Extract changelog notes
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && inputs.release_notes_mode == 'changelog' && steps.hex-check.outputs.on-hex == 'true' }}
+        id: release-notes
+        shell: bash
+        env:
+          BARE_VERSION: ${{ steps.mode.outputs.bare_version }}
+        run: |
+          set -euo pipefail
+          awk -v version="$BARE_VERSION" '
+            /^## \[v?[0-9]/ {
+              if (found) exit
+              if (index($0, "[v" version "]") || index($0, "[" version "]")) {
+                found = 1
+                next
+              }
+            }
+            found {
+              if (/^## \[v?[0-9]/) exit
+              print
+            }
+          ' CHANGELOG.md > release_notes.md
+
+          if [ -s release_notes.md ]; then
+            echo "has-notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-notes=false" >> "$GITHUB_OUTPUT"
+            rm -f release_notes.md
+          fi
+
+      - name: Create or update GitHub release with changelog notes
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && inputs.release_notes_mode == 'changelog' && steps.release-notes.outputs.has-notes == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+          TAG_NAME: ${{ steps.mode.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
+              --title "Release $TAG_NAME" \
+              --notes-file release_notes.md
+          else
+            gh release create "$TAG_NAME" \
+              --title "Release $TAG_NAME" \
+              --notes-file release_notes.md
+          fi
+
+      - name: Create GitHub release with generated notes
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && (inputs.release_notes_mode == 'generated' || steps.release-notes.outputs.has-notes != 'true') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+          TAG_NAME: ${{ steps.mode.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" --title "Release $TAG_NAME"
+          else
+            gh release create "$TAG_NAME" \
+              --title "Release $TAG_NAME" \
+              --generate-notes
+          fi
+
+      - name: Release summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Jido Release Summary"
+            echo "- Operation: ${{ steps.mode.outputs.operation || 'unknown' }}"
+            echo "- Dry run: ${{ inputs.dry_run }}"
+            echo "- Hex dry run: ${{ inputs.hex_dry_run }}"
+            echo "- Prepare skipped: ${{ steps.prepare.outputs.skipped || 'false' }}"
+            if [ -n "${{ steps.mode.outputs.target_branch }}" ]; then
+              echo "- Target branch: ${{ steps.mode.outputs.target_branch }}"
+            fi
+            if [ -n "${{ steps.mode.outputs.tag_name }}" ]; then
+              echo "- Tag: ${{ steps.mode.outputs.tag_name }}"
+            fi
+            if [ -n "${{ steps.prepared-version.outputs.version }}" ]; then
+              echo "- Prepared version: ${{ steps.prepared-version.outputs.version }}"
+            fi
+            if [ -n "${{ steps.package-version.outputs.version }}" ]; then
+              echo "- Package version: ${{ steps.package-version.outputs.version }}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

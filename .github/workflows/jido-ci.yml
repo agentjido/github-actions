@@ -1,0 +1,285 @@
+name: Jido CI
+
+on:
+  workflow_call:
+    secrets:
+      HEX_API_KEY:
+        required: false
+    inputs:
+      quality_otp_version:
+        description: OTP version for the quality lane
+        required: false
+        type: string
+        default: "28"
+      quality_elixir_version:
+        description: Elixir version for the quality lane
+        required: false
+        type: string
+        default: "1.19"
+      quality_mix_env:
+        description: MIX_ENV for the quality lane
+        required: false
+        type: string
+        default: "dev"
+      otp_versions:
+        description: JSON array of OTP versions for the test matrix
+        required: false
+        type: string
+        default: '["27", "28"]'
+      elixir_versions:
+        description: JSON array of Elixir versions for the test matrix
+        required: false
+        type: string
+        default: '["1.18", "1.19"]'
+      experimental_compile_elixir_versions:
+        description: JSON array of exact compile-only Elixir versions allowed to fail
+        required: false
+        type: string
+        default: "[]"
+      experimental_compile_otp_versions:
+        description: Optional JSON array of OTP versions for experimental compile checks
+        required: false
+        type: string
+        default: ""
+      experimental_compile_otp_name:
+        description: Optional label for experimental compile OTP versions
+        required: false
+        type: string
+        default: ""
+      test_mix_env:
+        description: MIX_ENV for the test lane
+        required: false
+        type: string
+        default: "test"
+      test_setup_command:
+        description: Optional command that runs before tests
+        required: false
+        type: string
+        default: ""
+      test_command:
+        description: Test command
+        required: false
+        type: string
+        default: "mix test"
+      audit_command:
+        description: Audit command
+        required: false
+        type: string
+        default: "mix hex.audit"
+      format_command:
+        description: Format check command
+        required: false
+        type: string
+        default: "mix format --check-formatted"
+      credo_command:
+        description: Credo command
+        required: false
+        type: string
+        default: "mix credo --strict"
+      dialyzer_command:
+        description: Dialyzer command
+        required: false
+        type: string
+        default: "mix dialyzer"
+      unused_deps_command:
+        description: Unused dependency check command
+        required: false
+        type: string
+        default: "mix deps.unlock --check-unused"
+      hex_package_command:
+        description: Hex package validation command
+        required: false
+        type: string
+        default: "HEX_API_KEY=${HEX_API_KEY:-dry-run} mix hex.publish --dry-run --yes"
+      changelog_guard:
+        description: Enable CHANGELOG.md pull request policy
+        required: false
+        type: boolean
+        default: true
+      changelog_guard_mode:
+        description: "CHANGELOG.md policy: no_changes or no_unreleased"
+        required: false
+        type: string
+        default: "no_changes"
+      validate_hex_package:
+        description: Run the Hex package dry-run command during CI
+        required: false
+        type: boolean
+        default: true
+      docs:
+        description: Build docs in the quality lane
+        required: false
+        type: boolean
+        default: true
+      docs_command:
+        description: Documentation build command
+        required: false
+        type: string
+        default: "mix docs"
+
+jobs:
+  resolve-platform:
+    name: Resolve Platform
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      repository: ${{ steps.platform.outputs.repository }}
+      ref: ${{ steps.platform.outputs.ref }}
+      path: ${{ steps.platform.outputs.path }}
+    steps:
+      - name: Resolve workflow platform ref
+        id: platform
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+          workflow_path="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-ci\\.yml@")) | .path' \
+              | head -n 1
+          )"
+          workflow_ref="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-ci\\.yml@")) | .ref // empty' \
+              | head -n 1
+          )"
+          workflow_sha="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-ci\\.yml@")) | .sha // empty' \
+              | head -n 1
+          )"
+          if [ -z "$workflow_path" ]; then
+            echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
+            exit 1
+          fi
+          echo "repository=${workflow_path%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${workflow_ref:-$workflow_sha}" >> "$GITHUB_OUTPUT"
+          echo "path=.github-actions-platform" >> "$GITHUB_OUTPUT"
+
+  compile:
+    name: Compile
+    needs: resolve-platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout workflow platform
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ needs.resolve-platform.outputs.repository }}
+          ref: ${{ needs.resolve-platform.outputs.ref }}
+          path: ${{ needs.resolve-platform.outputs.path }}
+
+      - name: Setup Beam
+        uses: ./.github-actions-platform/.github/actions/setup-beam
+        with:
+          otp-version: ${{ inputs.quality_otp_version }}
+          elixir-version: ${{ inputs.quality_elixir_version }}
+
+      - name: Restore caches
+        id: cache
+        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
+        with:
+          otp-version: ${{ inputs.quality_otp_version }}
+          elixir-version: ${{ inputs.quality_elixir_version }}
+          mix-env: test
+
+      - name: Bootstrap Mix
+        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
+
+      - name: Install dependencies
+        uses: ./.github-actions-platform/.github/actions/install-deps
+        with:
+          mix-env: test
+          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Compile project
+        shell: bash
+        env:
+          MIX_ENV: test
+        run: |
+          set -euo pipefail
+          mix compile --warnings-as-errors
+
+  quality:
+    name: Quality
+    needs:
+      - resolve-platform
+      - compile
+    uses: ./.github/workflows/elixir-quality.yml
+    permissions:
+      contents: read
+    secrets:
+      HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+    with:
+      otp_version: ${{ inputs.quality_otp_version }}
+      elixir_version: ${{ inputs.quality_elixir_version }}
+      mix_env: ${{ inputs.quality_mix_env }}
+      audit_command: ${{ inputs.audit_command }}
+      format_command: ${{ inputs.format_command }}
+      credo_command: ${{ inputs.credo_command }}
+      dialyzer_command: ${{ inputs.dialyzer_command }}
+      unused_deps_command: ${{ inputs.unused_deps_command }}
+      hex_package_command: ${{ inputs.hex_package_command }}
+      changelog_guard: ${{ inputs.changelog_guard }}
+      changelog_guard_mode: ${{ inputs.changelog_guard_mode }}
+      validate_hex_package: ${{ inputs.validate_hex_package }}
+      docs: ${{ inputs.docs }}
+      docs_command: ${{ inputs.docs_command }}
+      workflow_platform_repository: ${{ needs.resolve-platform.outputs.repository }}
+      workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
+      workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
+
+  test:
+    name: Test
+    needs:
+      - resolve-platform
+      - compile
+    uses: ./.github/workflows/elixir-test.yml
+    permissions:
+      contents: read
+    with:
+      otp_versions: ${{ inputs.otp_versions }}
+      elixir_versions: ${{ inputs.elixir_versions }}
+      experimental_compile_elixir_versions: ${{ inputs.experimental_compile_elixir_versions }}
+      experimental_compile_otp_versions: ${{ inputs.experimental_compile_otp_versions }}
+      experimental_compile_otp_name: ${{ inputs.experimental_compile_otp_name }}
+      mix_env: ${{ inputs.test_mix_env }}
+      test_setup_command: ${{ inputs.test_setup_command }}
+      test_command: ${{ inputs.test_command }}
+      workflow_platform_repository: ${{ needs.resolve-platform.outputs.repository }}
+      workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
+      workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
+
+  summary:
+    name: Summary
+    if: always()
+    needs:
+      - compile
+      - quality
+      - test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Report CI summary
+        shell: bash
+        run: |
+          {
+            echo "## Jido CI Summary"
+            echo "- Compile: ${{ needs.compile.result }}"
+            echo "- Quality: ${{ needs.quality.result }}"
+            echo "- Test: ${{ needs.test.result }}"
+            echo "- Quality toolchain: OTP ${{ inputs.quality_otp_version }}, Elixir ${{ inputs.quality_elixir_version }}"
+            echo "- Test matrix OTPs: ${{ inputs.otp_versions }}"
+            echo "- Test matrix Elixirs: ${{ inputs.elixir_versions }}"
+            echo "- Docs: ${{ inputs.docs }}"
+          } >> "$GITHUB_STEP_SUMMARY"
