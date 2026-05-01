@@ -20,7 +20,6 @@ Everything else in `.github/workflows/` is internal or legacy.
 - docs build
 - Hex package dry-run
 - changelog guard
-- community file policy
 - REUSE compliance
 - optional Sobelow and conventional commit validation
 

@@ -56,9 +56,6 @@ then fans out explicit quality, package, docs, policy, and test jobs.
 | `sobelow_command` | string | `"mix sobelow"` | Sobelow command |
 | `conventional_commits` | boolean | `false` | Run `git_ops` commit validation |
 | `conventional_commit_command` | string | `"mix git_ops.check_message"` | Conventional commit command |
-| `community_files` | boolean | `true` | Check Jido community file policy |
-| `community_files_source_repository` | string | `"agentjido/.github"` | Canonical community files repository |
-| `community_files_source_ref` | string | `"main"` | Canonical community files ref |
 | `reuse` | boolean | `true` | Run REUSE compliance check |
 
 ### Stable Secrets

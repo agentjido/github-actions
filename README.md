@@ -129,9 +129,6 @@ jobs:
 | `sobelow_command` | string | `mix sobelow` | Sobelow command |
 | `conventional_commits` | boolean | `false` | Validate current commit message with git_ops |
 | `conventional_commit_command` | string | `mix git_ops.check_message` | Conventional commit command |
-| `community_files` | boolean | `true` | Check Jido community file policy |
-| `community_files_source_repository` | string | `agentjido/.github` | Repository containing canonical community files |
-| `community_files_source_ref` | string | `main` | Ref containing canonical community files |
 | `reuse` | boolean | `true` | Run REUSE compliance check |
 
 ## `jido-release.yml` Inputs
