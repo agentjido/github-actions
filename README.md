@@ -6,8 +6,9 @@ Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem.
 
 | Workflow | Purpose | Public API |
 | --- | --- | --- |
-| `jido-ci.yml` | Default Jido CI: compile gate, split quality jobs, test matrix, optional policy/write-back jobs | Yes |
-| `elixir-release.yml` | Protected-branch-safe git_ops releases, Hex publish, and GitHub releases | Yes |
+| `jido-ci.yml` | Read-only Jido CI: compile gate, split quality jobs, test matrix, docs, policy checks | Yes |
+| `jido-release.yml` | Tag-driven Hex publish and dispatch-supported git_ops release preparation | Yes |
+| `jido-review.yml` | Advisory pull request review packet, artifacts, summary, and optional sticky comment | Yes |
 | `elixir-quality.yml` | Internal quality building block used by `jido-ci.yml` | No |
 | `elixir-test.yml` | Internal test building block used by `jido-ci.yml` | No |
 | `elixir-lint.yml` | Legacy v3 lint workflow | No new v4 adoption |
@@ -36,43 +37,66 @@ jobs:
     secrets: inherit
 ```
 
-For write-back automation:
-
-```yaml
-permissions:
-  actions: read
-  contents: write
-  pull-requests: write
-
-jobs:
-  ci:
-    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
-    secrets: inherit
-    with:
-      writeback: true
-      writeback_command: mix format
-      writeback_paths: "."
-      writeback_branch_mode: pull-request
-```
-
 Create `.github/workflows/release.yml`:
 
 ```yaml
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      operation:
+        description: "Release operation: auto, prepare, or publish"
+        required: false
+        type: choice
+        default: auto
+        options: [auto, prepare, publish]
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+      hex_dry_run:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read
   contents: write
-  pull-requests: write
 
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v4
+    with:
+      operation: ${{ inputs.operation || 'auto' }}
+      dry_run: ${{ inputs.dry_run || false }}
+      hex_dry_run: ${{ inputs.hex_dry_run || false }}
     secrets: inherit
+```
+
+Create `.github/workflows/review.yml`:
+
+```yaml
+name: Jido Review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review:
+    name: Jido Review
+    uses: agentjido/github-actions/.github/workflows/jido-review.yml@v4
 ```
 
 ## `jido-ci.yml` Inputs
@@ -81,7 +105,7 @@ jobs:
 | --- | --- | --- | --- |
 | `quality_otp_version` | string | `28` | OTP version for compile and quality jobs |
 | `quality_elixir_version` | string | `1.19` | Elixir version for compile and quality jobs |
-| `quality_mix_env` | string | `dev` | `MIX_ENV` for quality and write-back jobs |
+| `quality_mix_env` | string | `dev` | `MIX_ENV` for quality jobs |
 | `otp_versions` | string | `["27", "28"]` | JSON array for the test matrix |
 | `elixir_versions` | string | `["1.18", "1.19"]` | JSON array for the test matrix |
 | `experimental_compile_elixir_versions` | string | `[]` | Non-blocking compile-only Elixir versions |
@@ -105,33 +129,39 @@ jobs:
 | `sobelow_command` | string | `mix sobelow` | Sobelow command |
 | `conventional_commits` | boolean | `false` | Validate current commit message with git_ops |
 | `conventional_commit_command` | string | `mix git_ops.check_message` | Conventional commit command |
-| `dependency_submission` | boolean | `false` | Submit dependency graph data on default-branch pushes |
 | `community_files` | boolean | `true` | Check Jido community file policy |
 | `community_files_source_repository` | string | `agentjido/.github` | Repository containing canonical community files |
 | `community_files_source_ref` | string | `main` | Ref containing canonical community files |
 | `reuse` | boolean | `true` | Run REUSE compliance check |
-| `writeback` | boolean | `false` | Enable automated write-back |
-| `writeback_command` | string | `""` | Command that produces write-back changes |
-| `writeback_paths` | string | `.` | Space-delimited pathspecs eligible for write-back commits |
-| `writeback_commit_message` | string | `ci: apply automated write-back` | Write-back commit message |
-| `writeback_branch_mode` | string | `pull-request` | `pull-request` or `direct` |
 
-## `elixir-release.yml` Inputs
+## `jido-release.yml` Inputs
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
+| `operation` | string | `auto` | `auto`, `prepare`, or `publish` |
+| `tag_name` | string | `""` | Optional v-prefixed tag for dispatch publish simulation |
 | `otp_version` | string | `28` | OTP version |
 | `elixir_version` | string | `1.18` | Elixir version |
 | `mix_env` | string | `dev` | `MIX_ENV` for release |
-| `release_command` | string | `mix git_ops.release --yes` | Release command |
+| `release_command` | string | `mix git_ops.release --yes` | Release preparation command |
 | `version_override` | string | `""` | Optional bare SemVer override |
 | `preflight_command` | string | `mix hex.audit && MIX_ENV=test mix test` | Validation before release |
-| `release_push_mode` | string | `direct` | `direct` or `pull-request` |
 | `release_notes_mode` | string | `changelog` | `changelog` or `generated` |
-| `dry_run` | boolean | `false` | Run release flow without push, GitHub release, or Hex publish |
-| `hex_dry_run` | boolean | `false` | Push git release state but run Hex dry-run instead of publish |
+| `dry_run` | boolean | `false` | Run without push, GitHub release, or Hex publish |
+| `hex_dry_run` | boolean | `false` | Run Hex publish as a dry run |
 | `skip_preflight` | boolean | `false` | Skip preflight validation |
 | `skip_tests` | boolean | `false` | Backward-compatible alias for skipping preflight |
+
+## `jido-review.yml` Inputs
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `post_comment` | boolean | `true` | Post or update one sticky PR comment |
+| `fail_on_error` | boolean | `false` | Fail when review generation/commenting fails |
+| `review_config_path` | string | `.github/jido-review.yml` | Optional repo review config path |
+| `max_diff_lines` | number | `2000` | Maximum diff lines in the packet |
+| `agent_review` | boolean | `false` | Run an optional external review command |
+| `agent_review_command` | string | `""` | Command that consumes the review packet |
 
 ## Version Pinning
 
@@ -141,26 +171,19 @@ jobs:
 
 ```yaml
 uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
-uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4.0.0
+uses: agentjido/github-actions/.github/workflows/jido-release.yml@v4
+uses: agentjido/github-actions/.github/workflows/jido-review.yml@v4
 ```
 
 These refs are git refs on this repository, so they version the entire workflow repo rather than an individual workflow file.
 
 ## Permissions
 
-The default CI path needs `actions: read` and `contents: read`. The workflow
-uses the Actions API to resolve the reusable workflow repository and ref for
-its internal helper checkout.
+- `jido-ci.yml` needs `actions: read` and `contents: read`.
+- `jido-release.yml` needs `actions: read` and `contents: write`; non-dry-run `prepare` requires a `RELEASE_TOKEN` secret so pushed tags can trigger publish workflows.
+- `jido-review.yml` needs `actions: read`, `contents: read`, `issues: write`, and `pull-requests: write` when `post_comment` is enabled.
 
-Opt-in features need additional permissions in the consumer workflow:
-
-- `dependency_submission: true` needs `contents: write`.
-- `writeback: true` needs `contents: write` and `pull-requests: write`.
-- direct protected-branch write-back needs a token or GitHub App that branch rules allow to push.
-
-Reusable workflows cannot elevate the caller's token permissions. The standard
-jobs declare read-only permissions; opt-in write jobs inherit the extra scopes
-only when the consumer grants them.
+Reusable workflows cannot elevate the caller's token permissions. The caller workflow must grant the maximum scopes the reusable workflow needs.
 
 ## Release Contract
 
@@ -192,14 +215,6 @@ if config_env() != :prod do
     version_tag_prefix: "v"
 end
 ```
-
-## Consumer Repositories
-
-- [jido](https://github.com/agentjido/jido)
-- [jido_action](https://github.com/agentjido/jido_action)
-- [jido_signal](https://github.com/agentjido/jido_signal)
-- [req_llm](https://github.com/agentjido/req_llm)
-- [llm_db](https://github.com/agentjido/llm_db)
 
 ## License
 

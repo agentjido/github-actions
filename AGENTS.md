@@ -5,6 +5,8 @@ Consumer repositories import them with refs like:
 
 ```yaml
 uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
+uses: agentjido/github-actions/.github/workflows/jido-release.yml@v4
+uses: agentjido/github-actions/.github/workflows/jido-review.yml@v4
 uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4.0.0
 ```
 
@@ -36,7 +38,7 @@ Those refs are git refs on this repository. They version the entire repo, not in
 
 ## What Counts As Breaking
 
-- Removing or renaming a reusable workflow file.
+- Removing or renaming a public reusable workflow file.
 - Adding or changing required inputs, secrets, outputs, or permissions.
 - Changing defaults in a way that can make a previously passing consumer fail.
 - Removing supported toolchain, service, or runtime behavior consumers depend on.
@@ -57,6 +59,7 @@ Those refs are git refs on this repository. They version the entire repo, not in
 ## Documentation Sync
 
 - Keep this file and `README.md` aligned on the recommended consumer pins.
+- README documents the public `jido-ci.yml`, `jido-release.yml`, and `jido-review.yml` entrypoints.
 - README documents both the floating major form (`@v4`) and an exact version form (`@v4.0.0`).
 - When a new major is introduced, update both files in the same change.
 - When README updates its exact version example, update the example here too.

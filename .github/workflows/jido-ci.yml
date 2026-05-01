@@ -5,8 +5,6 @@ on:
     secrets:
       HEX_API_KEY:
         required: false
-      WRITEBACK_TOKEN:
-        required: false
     inputs:
       quality_otp_version:
         description: OTP version for the quality lane
@@ -138,11 +136,6 @@ on:
         required: false
         type: string
         default: "mix git_ops.check_message"
-      dependency_submission:
-        description: Submit dependency graph data on default-branch pushes
-        required: false
-        type: boolean
-        default: false
       community_files:
         description: Check Jido community file policy
         required: false
@@ -163,31 +156,6 @@ on:
         required: false
         type: boolean
         default: true
-      writeback:
-        description: Enable automated write-back after successful validation
-        required: false
-        type: boolean
-        default: false
-      writeback_command:
-        description: Command that produces repo write-back changes
-        required: false
-        type: string
-        default: ""
-      writeback_paths:
-        description: Space-delimited pathspecs that may be committed by the write-back job
-        required: false
-        type: string
-        default: "."
-      writeback_commit_message:
-        description: Commit message for automated write-back changes
-        required: false
-        type: string
-        default: "ci: apply automated write-back"
-      writeback_branch_mode:
-        description: "Write-back mode: pull-request or direct"
-        required: false
-        type: string
-        default: "pull-request"
 
 jobs:
   resolve-platform:
@@ -399,152 +367,6 @@ jobs:
       - name: Run REUSE lint
         uses: fsfe/reuse-action@772649cfa03a64a08c458c7cca9a6a473d74e7f9 # v6
 
-  dependency-submission:
-    name: Dependency Submission
-    if: ${{ inputs.dependency_submission && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Submit Mix dependencies
-        uses: erlef/mix-dependency-submission@fa3e8f349d00a32bf14eec1c7577d6564abe08d2 # v1.3.1
-
-  writeback:
-    name: Write-Back
-    needs:
-      - resolve-platform
-      - quality
-      - test
-      - community-files
-      - reuse
-    if: ${{ always() && !failure() && !cancelled() && inputs.writeback && inputs.writeback_command != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    concurrency:
-      group: writeback-${{ github.repository }}-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - name: Validate write-back mode
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "${{ inputs.writeback_branch_mode }}" in
-            pull-request|direct) ;;
-            *)
-              echo "::error::Unsupported writeback_branch_mode: ${{ inputs.writeback_branch_mode }}"
-              exit 1
-              ;;
-          esac
-
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.WRITEBACK_TOKEN != '' && secrets.WRITEBACK_TOKEN || github.token }}
-
-      - name: Checkout workflow platform
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: ${{ needs.resolve-platform.outputs.repository }}
-          ref: ${{ needs.resolve-platform.outputs.ref }}
-          path: ${{ needs.resolve-platform.outputs.path }}
-
-      - name: Setup Beam
-        uses: ./.github-actions-platform/.github/actions/setup-beam
-        with:
-          otp-version: ${{ inputs.quality_otp_version }}
-          elixir-version: ${{ inputs.quality_elixir_version }}
-
-      - name: Restore caches
-        id: cache
-        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
-        with:
-          otp-version: ${{ inputs.quality_otp_version }}
-          elixir-version: ${{ inputs.quality_elixir_version }}
-          mix-env: ${{ inputs.quality_mix_env }}
-
-      - name: Bootstrap Mix
-        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
-
-      - name: Install dependencies
-        uses: ./.github-actions-platform/.github/actions/install-deps
-        with:
-          mix-env: ${{ inputs.quality_mix_env }}
-          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
-
-      - name: Run write-back command
-        shell: bash
-        env:
-          MIX_ENV: ${{ inputs.quality_mix_env }}
-        run: |
-          set -euo pipefail
-          ${{ inputs.writeback_command }}
-
-      - name: Detect write-back changes
-        id: changes
-        shell: bash
-        env:
-          WRITEBACK_PATHS: ${{ inputs.writeback_paths }}
-        run: |
-          set -euo pipefail
-          if [ -n "$(git status --porcelain --untracked-files=all -- ${WRITEBACK_PATHS})" ]; then
-            echo "has-changes=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has-changes=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Configure git
-        if: ${{ steps.changes.outputs.has-changes == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Create write-back pull request
-        if: ${{ steps.changes.outputs.has-changes == 'true' && inputs.writeback_branch_mode == 'pull-request' }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.WRITEBACK_TOKEN != '' && secrets.WRITEBACK_TOKEN || github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          WRITEBACK_PATHS: ${{ inputs.writeback_paths }}
-          WRITEBACK_COMMIT_MESSAGE: ${{ inputs.writeback_commit_message }}
-        run: |
-          set -euo pipefail
-          branch="automation/writeback-${{ github.run_id }}-${{ github.run_attempt }}"
-          git switch -c "$branch"
-          git add --all -- ${WRITEBACK_PATHS}
-          git commit -m "$WRITEBACK_COMMIT_MESSAGE"
-          git push --set-upstream origin "$branch"
-          gh pr create \
-            --base "$DEFAULT_BRANCH" \
-            --head "$branch" \
-            --title "$WRITEBACK_COMMIT_MESSAGE" \
-            --body "Automated write-back generated by the reusable Jido CI workflow."
-
-      - name: Push write-back directly
-        if: ${{ steps.changes.outputs.has-changes == 'true' && inputs.writeback_branch_mode == 'direct' }}
-        shell: bash
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          WRITEBACK_PATHS: ${{ inputs.writeback_paths }}
-          WRITEBACK_COMMIT_MESSAGE: ${{ inputs.writeback_commit_message }}
-        run: |
-          set -euo pipefail
-          git add --all -- ${WRITEBACK_PATHS}
-          git commit -m "$WRITEBACK_COMMIT_MESSAGE"
-          git push origin "HEAD:${DEFAULT_BRANCH}"
-
-      - name: Summarize write-back
-        if: always()
-        shell: bash
-        run: |
-          echo "### Write-back" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Enabled: true" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Mode: ${{ inputs.writeback_branch_mode }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Changes detected: ${{ steps.changes.outputs.has-changes || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
-
   summary:
     name: Summary
     if: always()
@@ -554,8 +376,6 @@ jobs:
       - test
       - community-files
       - reuse
-      - dependency-submission
-      - writeback
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -570,8 +390,6 @@ jobs:
             echo "- Test: ${{ needs.test.result }}"
             echo "- Community files: ${{ needs.community-files.result }}"
             echo "- REUSE: ${{ needs.reuse.result }}"
-            echo "- Dependency submission: ${{ needs.dependency-submission.result }}"
-            echo "- Write-back: ${{ needs.writeback.result }}"
             echo "- Quality toolchain: OTP ${{ inputs.quality_otp_version }}, Elixir ${{ inputs.quality_elixir_version }}"
             echo "- Test matrix OTPs: ${{ inputs.otp_versions }}"
             echo "- Test matrix Elixirs: ${{ inputs.elixir_versions }}"
