@@ -179,10 +179,13 @@ These refs are git refs on this repository, so they version the entire workflow 
 
 Reusable workflows cannot elevate the caller's token permissions. The caller workflow must grant the maximum scopes the reusable workflow needs.
 
-## Package Rollout
+## Package Integration
 
-Use [JIDO_PACKAGE_ROLLOUT.md](./JIDO_PACKAGE_ROLLOUT.md) for the standard
-three-lane package rollout template and validation checklist.
+Use
+[JIDO_PACKAGE_INTEGRATION_GUIDE.md](./JIDO_PACKAGE_INTEGRATION_GUIDE.md) for
+the exact consumer filenames, workflow contents, validation commands, release
+dry-run flow, and rollout PR checklist. `JIDO_PACKAGE_ROLLOUT.md` is kept as a
+pointer for older links.
 
 ## Release Contract
 
