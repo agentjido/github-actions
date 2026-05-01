@@ -102,7 +102,7 @@ on:
         type: string
         default: "no_changes"
       validate_hex_package:
-        description: Run the Hex package dry-run command during pull requests
+        description: Run the Hex package dry-run command during CI
         required: false
         type: boolean
         default: true
@@ -161,9 +161,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workflow_path="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '.referenced_workflows[0].path // empty')"
-          workflow_ref="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '.referenced_workflows[0].ref // empty')"
-          workflow_sha="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '.referenced_workflows[0].sha // empty')"
+          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+          workflow_path="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-ci\\.yml@")) | .path' \
+              | head -n 1
+          )"
+          workflow_ref="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-ci\\.yml@")) | .ref // empty' \
+              | head -n 1
+          )"
+          workflow_sha="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-ci\\.yml@")) | .sha // empty' \
+              | head -n 1
+          )"
           if [ -z "$workflow_path" ]; then
             echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
             exit 1

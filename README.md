@@ -6,7 +6,7 @@ Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem.
 
 | Workflow | Purpose | Public API |
 | --- | --- | --- |
-| `jido-ci.yml` | Read-only Jido CI: compile gate, split quality jobs, test matrix, docs, policy checks | Yes |
+| `jido-ci.yml` | Read-only Jido CI: compile gate, split quality jobs, test matrix, docs, package checks | Yes |
 | `jido-release.yml` | Tag-driven Hex publish and dispatch-supported git_ops release preparation | Yes |
 | `jido-review.yml` | Advisory pull request review packet, artifacts, summary, and optional sticky comment | Yes |
 | `elixir-quality.yml` | Internal quality building block used by `jido-ci.yml` | No |
@@ -122,7 +122,7 @@ jobs:
 | `hex_package_command` | string | `HEX_API_KEY=${HEX_API_KEY:-dry-run} mix hex.publish --dry-run --yes` | Hex package validation command |
 | `changelog_guard` | boolean | `true` | Enable CHANGELOG.md PR policy |
 | `changelog_guard_mode` | string | `no_changes` | `no_changes` or `no_unreleased` |
-| `validate_hex_package` | boolean | `true` | Run the Hex package dry-run command on PRs |
+| `validate_hex_package` | boolean | `true` | Run the Hex package dry-run command during CI |
 | `docs` | boolean | `true` | Run docs build |
 | `docs_command` | string | `mix docs` | Docs build command |
 | `sobelow` | boolean | `false` | Run Sobelow |

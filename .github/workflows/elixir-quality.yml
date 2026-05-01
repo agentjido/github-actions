@@ -62,7 +62,7 @@ on:
         type: string
         default: "no_changes"
       validate_hex_package:
-        description: Run the Hex package dry-run command on pull requests
+        description: Run the Hex package dry-run command during CI
         required: false
         type: boolean
         default: true
@@ -390,7 +390,7 @@ jobs:
 
   hex-package-dry-run:
     name: Hex Package Dry Run
-    if: ${{ github.event_name == 'pull_request' && inputs.validate_hex_package }}
+    if: ${{ inputs.validate_hex_package }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

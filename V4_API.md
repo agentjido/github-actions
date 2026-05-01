@@ -24,7 +24,7 @@ workflow is a breaking change.
 ## `jido-ci.yml`
 
 `jido-ci.yml` is the read-only strict CI entrypoint. It runs a compile gate and
-then fans out explicit quality, package, docs, policy, and test jobs.
+then fans out explicit quality, package, docs, license, and test jobs.
 
 ### Stable Inputs
 
@@ -49,7 +49,7 @@ then fans out explicit quality, package, docs, policy, and test jobs.
 | `hex_package_command` | string | `"HEX_API_KEY=${HEX_API_KEY:-dry-run} mix hex.publish --dry-run --yes"` | Hex package dry-run command |
 | `changelog_guard` | boolean | `true` | Enable CHANGELOG.md PR policy |
 | `changelog_guard_mode` | string | `"no_changes"` | `no_changes` or `no_unreleased` |
-| `validate_hex_package` | boolean | `true` | Run Hex package dry run |
+| `validate_hex_package` | boolean | `true` | Run Hex package dry run during CI |
 | `docs` | boolean | `true` | Build docs |
 | `docs_command` | string | `"mix docs"` | Docs command |
 | `sobelow` | boolean | `false` | Run Sobelow |

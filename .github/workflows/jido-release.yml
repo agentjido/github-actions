@@ -118,15 +118,21 @@ jobs:
           fi
 
           if [ "$operation" = "publish" ]; then
-            if [[ ! "$tag_name" == v* ]]; then
-              echo "::error::Publish requires a v-prefixed tag from github.ref or inputs.tag_name."
+            if [[ ! "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "::error::Publish requires a v-prefixed SemVer tag from github.ref or inputs.tag_name."
               exit 1
             fi
             echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
             echo "bare_version=${tag_name#v}" >> "$GITHUB_OUTPUT"
+            echo "target_branch=" >> "$GITHUB_OUTPUT"
           else
+            if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+              echo "::error::Prepare must run from a branch ref."
+              exit 1
+            fi
             echo "tag_name=" >> "$GITHUB_OUTPUT"
             echo "bare_version=" >> "$GITHUB_OUTPUT"
+            echo "target_branch=${GITHUB_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
           fi
 
           echo "operation=$operation" >> "$GITHUB_OUTPUT"
@@ -155,6 +161,18 @@ jobs:
             exit 1
           fi
 
+      - name: Require Hex token for publish
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true }}
+        shell: bash
+        env:
+          HAS_HEX_API_KEY: ${{ secrets.HEX_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_HEX_API_KEY" != "true" ]; then
+            echo "::error::Non-dry-run publish requires HEX_API_KEY."
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -180,9 +198,21 @@ jobs:
         run: |
           set -euo pipefail
           run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
-          workflow_path="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].path // empty')"
-          workflow_ref="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].ref // empty')"
-          workflow_sha="$(printf '%s' "$run_json" | jq -r '.referenced_workflows[0].sha // empty')"
+          workflow_path="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .path' \
+              | head -n 1
+          )"
+          workflow_ref="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .ref // empty' \
+              | head -n 1
+          )"
+          workflow_sha="$(
+            printf '%s' "$run_json" \
+              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .sha // empty' \
+              | head -n 1
+          )"
           if [ -z "$workflow_path" ]; then
             echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
             exit 1
@@ -309,9 +339,10 @@ jobs:
         shell: bash
         env:
           RELEASE_VERSION: ${{ steps.prepared-version.outputs.version }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
         run: |
           set -euo pipefail
-          git push --atomic origin HEAD "refs/tags/${RELEASE_VERSION}"
+          git push --atomic origin "HEAD:refs/heads/${TARGET_BRANCH}" "refs/tags/${RELEASE_VERSION}"
 
       - name: Validate publish tag matches package version
         if: ${{ steps.mode.outputs.operation == 'publish' }}
@@ -440,6 +471,9 @@ jobs:
             echo "- Dry run: ${{ inputs.dry_run }}"
             echo "- Hex dry run: ${{ inputs.hex_dry_run }}"
             echo "- Prepare skipped: ${{ steps.prepare.outputs.skipped || 'false' }}"
+            if [ -n "${{ steps.mode.outputs.target_branch }}" ]; then
+              echo "- Target branch: ${{ steps.mode.outputs.target_branch }}"
+            fi
             if [ -n "${{ steps.mode.outputs.tag_name }}" ]; then
               echo "- Tag: ${{ steps.mode.outputs.tag_name }}"
             fi
