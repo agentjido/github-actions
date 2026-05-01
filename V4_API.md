@@ -24,7 +24,7 @@ workflow is a breaking change.
 ## `jido-ci.yml`
 
 `jido-ci.yml` is the read-only strict CI entrypoint. It runs a compile gate and
-then fans out explicit quality, package, docs, license, and test jobs.
+then fans out explicit quality, package, docs, changelog policy, and test jobs.
 
 ### Stable Inputs
 
@@ -52,11 +52,6 @@ then fans out explicit quality, package, docs, license, and test jobs.
 | `validate_hex_package` | boolean | `true` | Run Hex package dry run during CI |
 | `docs` | boolean | `true` | Build docs |
 | `docs_command` | string | `"mix docs"` | Docs command |
-| `sobelow` | boolean | `false` | Run Sobelow |
-| `sobelow_command` | string | `"mix sobelow"` | Sobelow command |
-| `conventional_commits` | boolean | `false` | Run `git_ops` commit validation |
-| `conventional_commit_command` | string | `"mix git_ops.check_message"` | Conventional commit command |
-| `reuse` | boolean | `true` | Run REUSE compliance check |
 
 ### Stable Secrets
 
@@ -121,6 +116,8 @@ automation can evolve without destabilizing required checks.
 | `fail_on_error` | boolean | `false` | Fail when packet generation or comment publishing fails |
 | `review_config_path` | string | `".github/jido-review.yml"` | Optional repo review configuration |
 | `max_diff_lines` | number | `2000` | Maximum diff lines in the packet |
+| `conventional_commits` | boolean | `true` | Check the PR title for conventional commit format |
+| `conventional_commit_pattern` | string | conventional commit regex | PR title validation pattern |
 | `agent_review` | boolean | `false` | Enable external agent review command |
 | `agent_review_command` | string | `""` | Command consuming `JIDO_REVIEW_JSON` and `JIDO_REVIEW_MARKDOWN` |
 
@@ -128,6 +125,7 @@ automation can evolve without destabilizing required checks.
 
 - Runs only from `pull_request` callers; v1 does not use `pull_request_target`.
 - Always writes a job summary and uploads `jido-review.md` / `jido-review.json`.
+- Checks the PR title against conventional commit format by default.
 - Posts one sticky PR comment for same-repository PRs when permissions allow it.
 - Fork PR comment failures are advisory unless `fail_on_error` is true.
 - `agent_review` is an extension point and is disabled by default.

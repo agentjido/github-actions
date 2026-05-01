@@ -20,8 +20,6 @@ Everything else in `.github/workflows/` is internal or legacy.
 - docs build
 - Hex package dry-run
 - changelog guard
-- REUSE compliance
-- optional Sobelow and conventional commit validation
 
 It does not write to repositories, submit dependency data, publish releases, or
 post comments.
@@ -56,6 +54,7 @@ reliably trigger follow-on tag workflows.
 - workflow trigger/permission risk signals
 - package/release-impact signals
 - missing test/docs/changelog signals
+- conventional commit PR title signal
 - CI status snapshot
 - `jido-review.md` and `jido-review.json` artifacts
 - optional sticky PR comment

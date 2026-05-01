@@ -116,31 +116,6 @@ on:
         required: false
         type: string
         default: "mix docs"
-      sobelow:
-        description: Run Sobelow in the quality lane
-        required: false
-        type: boolean
-        default: false
-      sobelow_command:
-        description: Sobelow command
-        required: false
-        type: string
-        default: "mix sobelow"
-      conventional_commits:
-        description: Validate the current commit message with git_ops
-        required: false
-        type: boolean
-        default: false
-      conventional_commit_command:
-        description: Conventional commit validation command
-        required: false
-        type: string
-        default: "mix git_ops.check_message"
-      reuse:
-        description: Run REUSE compliance check
-        required: false
-        type: boolean
-        default: true
 
 jobs:
   resolve-platform:
@@ -259,10 +234,6 @@ jobs:
       validate_hex_package: ${{ inputs.validate_hex_package }}
       docs: ${{ inputs.docs }}
       docs_command: ${{ inputs.docs_command }}
-      sobelow: ${{ inputs.sobelow }}
-      sobelow_command: ${{ inputs.sobelow_command }}
-      conventional_commits: ${{ inputs.conventional_commits }}
-      conventional_commit_command: ${{ inputs.conventional_commit_command }}
       workflow_platform_repository: ${{ needs.resolve-platform.outputs.repository }}
       workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
       workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
@@ -288,20 +259,6 @@ jobs:
       workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
       workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
 
-  reuse:
-    name: REUSE Compliance
-    if: ${{ inputs.reuse }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Run REUSE lint
-        uses: fsfe/reuse-action@772649cfa03a64a08c458c7cca9a6a473d74e7f9 # v6
-
   summary:
     name: Summary
     if: always()
@@ -309,7 +266,6 @@ jobs:
       - compile
       - quality
       - test
-      - reuse
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -322,11 +278,8 @@ jobs:
             echo "- Compile: ${{ needs.compile.result }}"
             echo "- Quality: ${{ needs.quality.result }}"
             echo "- Test: ${{ needs.test.result }}"
-            echo "- REUSE: ${{ needs.reuse.result }}"
             echo "- Quality toolchain: OTP ${{ inputs.quality_otp_version }}, Elixir ${{ inputs.quality_elixir_version }}"
             echo "- Test matrix OTPs: ${{ inputs.otp_versions }}"
             echo "- Test matrix Elixirs: ${{ inputs.elixir_versions }}"
             echo "- Docs: ${{ inputs.docs }}"
-            echo "- Sobelow: ${{ inputs.sobelow }}"
-            echo "- REUSE: ${{ inputs.reuse }}"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -23,6 +23,16 @@ on:
         required: false
         type: number
         default: 2000
+      conventional_commits:
+        description: Check the pull request title against the conventional commit format
+        required: false
+        type: boolean
+        default: true
+      conventional_commit_pattern:
+        description: Regular expression used to validate the pull request title
+        required: false
+        type: string
+        default: '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([A-Za-z0-9_.-]+\))?(!)?: .+'
       agent_review:
         description: Enable an optional external agent review command
         required: false
@@ -58,8 +68,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
           REVIEW_CONFIG_PATH: ${{ inputs.review_config_path }}
           MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+          CONVENTIONAL_COMMITS: ${{ inputs.conventional_commits }}
+          CONVENTIONAL_COMMIT_PATTERN: ${{ inputs.conventional_commit_pattern }}
         run: |
           set -euo pipefail
           mkdir -p .jido-review
@@ -86,6 +99,34 @@ jobs:
           test_files="$(jq '[.[] | select(.filename | test("(^test/|_test\\.exs$|/test/)"))] | length' <<<"$files_json")"
           source_files="$(jq '[.[] | select(.filename | test("^(lib|config)/"))] | length' <<<"$files_json")"
           changelog_files="$(jq '[.[] | select(.filename == "CHANGELOG.md")] | length' <<<"$files_json")"
+
+          conventional_commit_valid="skipped"
+          conventional_commit_message="Conventional commit title check disabled."
+          if [ "$CONVENTIONAL_COMMITS" = "true" ]; then
+            if [[ "$PR_TITLE" =~ $CONVENTIONAL_COMMIT_PATTERN ]]; then
+              conventional_commit_valid="true"
+              conventional_commit_message="PR title uses conventional commit format."
+            else
+              conventional_commit_valid="false"
+              conventional_commit_message="PR title should use conventional commit format, for example: ci: pilot v4 shared ci."
+            fi
+          fi
+
+          conventional_commit_json="$(
+            jq -n \
+              --argjson enabled "$CONVENTIONAL_COMMITS" \
+              --arg title "$PR_TITLE" \
+              --arg pattern "$CONVENTIONAL_COMMIT_PATTERN" \
+              --arg valid "$conventional_commit_valid" \
+              --arg message "$conventional_commit_message" \
+              '{
+                enabled: $enabled,
+                title: $title,
+                pattern: $pattern,
+                valid: (if $valid == "true" then true elif $valid == "false" then false else null end),
+                message: $message
+              }'
+          )"
 
           workflow_risks=()
           if [ "$workflow_files" -gt 0 ]; then
@@ -133,6 +174,7 @@ jobs:
             --argjson test_files "$test_files" \
             --argjson source_files "$source_files" \
             --argjson changelog_files "$changelog_files" \
+            --argjson conventional_commit "$conventional_commit_json" \
             --argjson workflow_risks "$(printf '%s\n' "${workflow_risks[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')" \
             --argjson missing_signals "$(printf '%s\n' "${missing_signals[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')" \
             '{
@@ -148,6 +190,9 @@ jobs:
                 test_files: $test_files,
                 source_files: $source_files,
                 changelog_files: $changelog_files
+              },
+              pr_policy: {
+                conventional_commit: $conventional_commit
               },
               workflow_risks: $workflow_risks,
               missing_signals: $missing_signals,
@@ -167,6 +212,17 @@ jobs:
             echo "- Docs/markdown files: $docs_files"
             echo "- Package files: $package_files"
             echo "- Workflow files: $workflow_files"
+            echo
+            echo "### PR Policy"
+            echo
+            if [ "$CONVENTIONAL_COMMITS" != "true" ]; then
+              echo "- Conventional commit title: disabled."
+            elif [ "$conventional_commit_valid" = "true" ]; then
+              echo "- Conventional commit title: pass."
+            else
+              echo "- Conventional commit title: needs attention. Expected a title like \`ci: pilot v4 shared ci\`."
+              echo "- Current title: \`$PR_TITLE\`"
+            fi
             echo
             echo "### Workflow Risk Signals"
             echo

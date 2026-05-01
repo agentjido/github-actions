@@ -125,11 +125,6 @@ jobs:
 | `validate_hex_package` | boolean | `true` | Run the Hex package dry-run command during CI |
 | `docs` | boolean | `true` | Run docs build |
 | `docs_command` | string | `mix docs` | Docs build command |
-| `sobelow` | boolean | `false` | Run Sobelow |
-| `sobelow_command` | string | `mix sobelow` | Sobelow command |
-| `conventional_commits` | boolean | `false` | Validate current commit message with git_ops |
-| `conventional_commit_command` | string | `mix git_ops.check_message` | Conventional commit command |
-| `reuse` | boolean | `true` | Run REUSE compliance check |
 
 ## `jido-release.yml` Inputs
 
@@ -157,6 +152,8 @@ jobs:
 | `fail_on_error` | boolean | `false` | Fail when review generation/commenting fails |
 | `review_config_path` | string | `.github/jido-review.yml` | Optional repo review config path |
 | `max_diff_lines` | number | `2000` | Maximum diff lines in the packet |
+| `conventional_commits` | boolean | `true` | Check the PR title for conventional commit format |
+| `conventional_commit_pattern` | string | conventional commit regex | PR title validation pattern |
 | `agent_review` | boolean | `false` | Run an optional external review command |
 | `agent_review_command` | string | `""` | Command that consumes the review packet |
 
