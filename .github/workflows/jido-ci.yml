@@ -143,11 +143,6 @@ on:
         required: false
         type: boolean
         default: false
-      credo_sarif:
-        description: Upload Credo SARIF results to code scanning
-        required: false
-        type: boolean
-        default: false
       community_files:
         description: Check Jido community file policy
         required: false
@@ -327,62 +322,6 @@ jobs:
       workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
       workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
 
-  credo-sarif:
-    name: Credo SARIF
-    needs:
-      - resolve-platform
-      - compile
-    if: ${{ inputs.credo_sarif }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Checkout workflow platform
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: ${{ needs.resolve-platform.outputs.repository }}
-          ref: ${{ needs.resolve-platform.outputs.ref }}
-          path: ${{ needs.resolve-platform.outputs.path }}
-
-      - name: Setup Beam
-        uses: ./.github-actions-platform/.github/actions/setup-beam
-        with:
-          otp-version: ${{ inputs.quality_otp_version }}
-          elixir-version: ${{ inputs.quality_elixir_version }}
-
-      - name: Restore caches
-        id: cache
-        uses: ./.github-actions-platform/.github/actions/restore-mix-cache
-        with:
-          otp-version: ${{ inputs.quality_otp_version }}
-          elixir-version: ${{ inputs.quality_elixir_version }}
-          mix-env: ${{ inputs.quality_mix_env }}
-
-      - name: Bootstrap Mix
-        uses: ./.github-actions-platform/.github/actions/bootstrap-mix
-
-      - name: Install dependencies
-        uses: ./.github-actions-platform/.github/actions/install-deps
-        with:
-          mix-env: ${{ inputs.quality_mix_env }}
-          deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
-
-      - name: Run Credo SARIF
-        shell: bash
-        env:
-          MIX_ENV: ${{ inputs.quality_mix_env }}
-        run: |
-          set -euo pipefail
-          mix credo --format sarif > results.sarif
-
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@0499de31b99561a6d14a36a5f662c2a54f91beee # v4.31.2
-        with:
-          sarif_file: results.sarif
-          category: credo
-
   community-files:
     name: Community Files
     if: ${{ inputs.community_files }}
@@ -464,6 +403,8 @@ jobs:
     name: Dependency Submission
     if: ${{ inputs.dependency_submission && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -482,6 +423,9 @@ jobs:
     if: ${{ always() && !failure() && !cancelled() && inputs.writeback && inputs.writeback_command != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
     concurrency:
       group: writeback-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
@@ -613,7 +557,6 @@ jobs:
       - compile
       - quality
       - test
-      - credo-sarif
       - community-files
       - reuse
       - dependency-submission
@@ -630,7 +573,6 @@ jobs:
             echo "- Compile: ${{ needs.compile.result }}"
             echo "- Quality: ${{ needs.quality.result }}"
             echo "- Test: ${{ needs.test.result }}"
-            echo "- Credo SARIF: ${{ needs.credo-sarif.result }}"
             echo "- Community files: ${{ needs.community-files.result }}"
             echo "- REUSE: ${{ needs.reuse.result }}"
             echo "- Dependency submission: ${{ needs.dependency-submission.result }}"
@@ -640,7 +582,6 @@ jobs:
             echo "- Test matrix Elixirs: ${{ inputs.elixir_versions }}"
             echo "- Docs: ${{ inputs.docs }}"
             echo "- Sobelow: ${{ inputs.sobelow }}"
-            echo "- Credo SARIF: ${{ inputs.credo_sarif }}"
             echo "- Community files: ${{ inputs.community_files }}"
             echo "- REUSE: ${{ inputs.reuse }}"
           } >> "$GITHUB_STEP_SUMMARY"

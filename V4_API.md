@@ -79,7 +79,6 @@ thorough.
 | `conventional_commits` | boolean | `false` | Validate the current commit message with `git_ops` |
 | `conventional_commit_command` | string | `"mix git_ops.check_message"` | Conventional commit validation command |
 | `dependency_submission` | boolean | `false` | Submit dependency graph data on default-branch pushes |
-| `credo_sarif` | boolean | `false` | Upload Credo SARIF results to code scanning |
 | `community_files` | boolean | `true` | Check Jido community file policy |
 | `community_files_source_repository` | string | `"agentjido/.github"` | Repository containing canonical community files |
 | `community_files_source_ref` | string | `"main"` | Ref containing canonical community files |
@@ -104,7 +103,7 @@ thorough.
 - docs, community file policy, and REUSE compliance are default-on.
 - `writeback` is opt-in and only runs on pushes to the default branch.
 - the experimental compile lane is non-blocking
-- dependency submission, Credo SARIF, and write-back require explicit opt-in and elevated consumer permissions.
+- dependency submission and write-back require explicit opt-in and elevated consumer permissions.
 - the standard public workflow needs only `actions: read` and `contents: read`; opt-in features inherit caller-granted write permissions because reusable workflows cannot elevate the caller token.
 
 ## `elixir-release.yml`

@@ -212,7 +212,6 @@ Default tasks should be explicit and opinionated:
 - optional `mix sobelow`
 - optional `mix docs`
 - optional `mix hex.publish --dry-run`
-- optional Credo SARIF upload
 
 V4 should prefer explicit tasks over a single `mix quality` alias as the internal default.
 
@@ -431,7 +430,6 @@ stable.
 - Examples:
   - `contents: read` for normal CI
   - `actions: read` for resolving reusable workflow metadata
-  - `security-events: write` only for SARIF uploads
   - `contents: write` only for write-back, release, or CLA signature storage
   - `pull-requests: write` only when the workflow opens or updates automation PRs
 

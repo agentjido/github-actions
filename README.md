@@ -106,7 +106,6 @@ jobs:
 | `conventional_commits` | boolean | `false` | Validate current commit message with git_ops |
 | `conventional_commit_command` | string | `mix git_ops.check_message` | Conventional commit command |
 | `dependency_submission` | boolean | `false` | Submit dependency graph data on default-branch pushes |
-| `credo_sarif` | boolean | `false` | Upload Credo SARIF to code scanning |
 | `community_files` | boolean | `true` | Check Jido community file policy |
 | `community_files_source_repository` | string | `agentjido/.github` | Repository containing canonical community files |
 | `community_files_source_ref` | string | `main` | Ref containing canonical community files |
@@ -156,7 +155,6 @@ its internal helper checkout.
 Opt-in features need additional permissions in the consumer workflow:
 
 - `dependency_submission: true` needs `contents: write`.
-- `credo_sarif: true` needs `security-events: write`.
 - `writeback: true` needs `contents: write` and `pull-requests: write`.
 - direct protected-branch write-back needs a token or GitHub App that branch rules allow to push.
 

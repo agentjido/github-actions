@@ -60,7 +60,6 @@ Tasks:
    - per-check commands such as `credo_command`, `docs_command`, and `dialyzer_command`
    - `changelog_guard_mode`
    - `dependency_submission`
-   - `credo_sarif`
    - `community_files`
    - `reuse`
    - `writeback`
@@ -190,7 +189,7 @@ Tasks:
    - Hex package dry run
    - conventional commit validation
 5. Keep a changelog guard for PRs.
-6. Add SARIF upload only if explicitly enabled and keep its permission narrow.
+6. Keep code-scanning integrations out of the core Jido CI workflow for now.
 
 Files to create or update:
 
