@@ -323,7 +323,11 @@ jobs:
           MIX_ENV: ${{ inputs.mix_env }}
         run: |
           set -euo pipefail
-          package_version="$(mix eval 'Mix.Project.get!().project()[:version] |> IO.puts()')"
+          package_version="$(
+            mix eval 'Mix.Project.get!().project()[:version] |> IO.puts()' \
+              | tail -n 1 \
+              | tr -d '[:space:]'
+          )"
           if [ "$package_version" != "$BARE_VERSION" ]; then
             echo "::error::Tag $TAG_NAME resolves to $BARE_VERSION, but mix.exs version is $package_version."
             exit 1
