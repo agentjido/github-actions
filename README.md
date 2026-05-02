@@ -11,7 +11,6 @@ Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem.
 | `jido-review.yml` | Advisory pull request review packet, artifacts, summary, and optional sticky comment | Yes |
 | `elixir-quality.yml` | Internal quality building block used by `jido-ci.yml` | No |
 | `elixir-test.yml` | Internal test building block used by `jido-ci.yml` | No |
-| `elixir-lint.yml` | Legacy v3 lint workflow | No new v4 adoption |
 
 Consumer repositories should call only the three public `jido-*` workflows.
 Internal `elixir-*` workflows are implementation details and can change without
