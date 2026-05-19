@@ -108,9 +108,10 @@ jobs:
     with:
       otp_versions: '["27", "28"]'
       elixir_versions: '["1.18", "1.19"]'
-      experimental_compile_elixir_versions: '["v1.20.0-rc.4"]'
-      experimental_compile_otp_versions: '["28.4.1"]'
-      experimental_compile_otp_name: '28'
+      # Optional: keep this lane on the latest exact Elixir release-candidate tag.
+      experimental_compile_elixir_versions: '["<latest-elixir-rc-tag>"]'
+      experimental_compile_otp_versions: '["<matching-otp-version>"]'
+      experimental_compile_otp_name: '<otp-major>'
       docs_command: mix docs -f html
       test_command: mix test
 ```
@@ -356,7 +357,7 @@ The PR should show these checks:
 - `CI / Test / 27 - 1.19`
 - `CI / Test / 28 - 1.18`
 - `CI / Test / 28 - 1.19`
-- `CI / Test / 28.4.1 - v1.20.0-rc.4 (experimental compile)`
+- `CI / Test / <matching-otp-version> - <latest-elixir-rc-tag> (experimental compile)`
 - `CI / Summary`
 - `Jido Review / Jido Review`
 
