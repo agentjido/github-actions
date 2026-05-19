@@ -288,6 +288,45 @@ jobs:
             bash -lc "${{ inputs.release_command }} ${escaped_args}"
           }
 
+          project_version() {
+            mix eval 'Mix.Project.get!().project()[:version] |> IO.puts()' \
+              | tail -n 1 \
+              | tr -d '[:space:]'
+          }
+
+          has_release_tag() {
+            git tag --list 'v[0-9]*' | grep -q .
+          }
+
+          if ! has_release_tag; then
+            current_version="$(project_version)"
+            release_version="${VERSION_OVERRIDE:-$current_version}"
+
+            if [ "$release_version" != "$current_version" ]; then
+              echo "::error::Initial release version_override must match the version already in mix.exs."
+              echo "::error::mix.exs version is $current_version, but version_override is $release_version."
+              exit 1
+            fi
+
+            release_tag="v${release_version}"
+            echo "No existing v-prefixed release tags found; preparing initial release $release_tag."
+
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              echo "Dry run requested; would create initial release tag $release_tag."
+              exit 0
+            fi
+
+            if git rev-parse --verify --quiet "refs/tags/$release_tag" >/dev/null; then
+              echo "::error::Release tag $release_tag already exists."
+              exit 1
+            fi
+
+            git tag "$release_tag"
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           dry_run_log="$(mktemp)"
           trap 'rm -f "$dry_run_log"' EXIT
 

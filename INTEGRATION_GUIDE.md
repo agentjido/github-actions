@@ -220,6 +220,20 @@ Non-dry-run `publish` requires a `HEX_API_KEY` secret.
 Use `hex_dry_run: true`, not `dry_run: true`, when you want to exercise the Hex
 package build without actually publishing to Hex.
 
+Use `dry_run: true` with `operation: prepare` for the safe pre-release check.
+This runs preflight plus release preparation logic and does not push a commit,
+tag, GitHub release, or Hex package.
+
+For packages with no existing `v*` release tag, the shared release workflow
+treats `operation: prepare` as an initial release. A dry run reports the initial
+tag it would create. A real prepare creates the initial `vVERSION` tag from the
+current `mix.exs` version, then pushes the tag through the normal tag-publish
+flow.
+
+Use `hex_dry_run: true` only with `operation: publish` and an existing
+`tag_name` when you want to exercise `mix hex.publish --dry-run` for an already
+prepared tag.
+
 ## File 3: `.github/workflows/review.yml`
 
 Create `.github/workflows/review.yml` with this content:
