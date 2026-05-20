@@ -7,7 +7,7 @@ Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem.
 | Workflow | Purpose | Public API |
 | --- | --- | --- |
 | `jido-ci.yml` | Read-only Jido CI: compile gate, split quality jobs, test matrix, docs, package checks | Yes |
-| `jido-release.yml` | Tag-driven Hex publish and dispatch-supported git_ops release preparation | Yes |
+| `jido-release.yml` | Dispatch-driven Hex publish and git_ops release preparation | Yes |
 | `jido-review.yml` | Advisory pull request review packet, artifacts, summary, and optional sticky comment | Yes |
 | `elixir-quality.yml` | Internal quality building block used by `jido-ci.yml` | No |
 | `elixir-test.yml` | Internal test building block used by `jido-ci.yml` | No |
@@ -31,15 +31,15 @@ Standard Jido packages should add exactly these caller workflows:
 The callers import:
 
 ```yaml
-uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
-uses: agentjido/github-actions/.github/workflows/jido-release.yml@v4
-uses: agentjido/github-actions/.github/workflows/jido-review.yml@v4
+uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
+uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5
+uses: agentjido/github-actions/.github/workflows/jido-review.yml@v5
 ```
 
 ## Version Pinning
 
-- `@v4`: Recommended for compatible automatic updates.
-- `@v4.0.0`: Exact v4.0.0 release, fixed forever.
+- `@v5`: Recommended for compatible automatic updates.
+- `@v5.0.0`: Exact v5.0.0 release, fixed forever.
 - Commit SHA: Maximum reproducibility.
 - `@main`: Development branch, not a stable production pin.
 
@@ -54,13 +54,16 @@ grant the maximum permissions the reusable workflow needs.
 | Workflow | Required caller permissions |
 | --- | --- |
 | `jido-ci.yml` | `actions: read`, `contents: read` |
-| `jido-release.yml` | `actions: read`, `contents: write` |
+| `jido-release.yml` | `actions: write`, `contents: write` |
 | `jido-review.yml` | `actions: read`, `contents: read`, `issues: write`, `pull-requests: write` when comment posting is enabled |
 
-`jido-release.yml` also needs these secrets for real releases:
+`jido-release.yml` also needs this secret for real Hex publishes:
 
-- `RELEASE_TOKEN` for non-dry-run `prepare`, so pushed tags can trigger publish workflows.
 - `HEX_API_KEY` for non-dry-run `publish`.
+
+Release preparation uses the ephemeral `GITHUB_TOKEN` to push release commits
+and tags, then explicitly dispatches the publish workflow. It does not require a
+long-lived GitHub release token.
 
 ## Release Contract
 
@@ -81,7 +84,7 @@ permissions:
 
 jobs:
   ci:
-    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
     secrets: inherit
 ```
 
@@ -95,12 +98,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
+  actions: write
   contents: write
 
 jobs:
   release:
-    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5
     secrets: inherit
 ```
 
@@ -115,7 +118,7 @@ permissions:
 
 jobs:
   review:
-    uses: agentjido/github-actions/.github/workflows/jido-review.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-review.yml@v5
 ```
 
 ## License

@@ -5,8 +5,6 @@ on:
     secrets:
       HEX_API_KEY:
         required: false
-      RELEASE_TOKEN:
-        required: false
     inputs:
       operation:
         description: "Release operation: auto, prepare, or publish"
@@ -73,6 +71,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_workflow:
+        description: Caller workflow file or ID to dispatch after a successful prepare
+        required: false
+        type: string
+        default: "release.yml"
 
 jobs:
   release:
@@ -83,7 +86,7 @@ jobs:
       group: release-${{ github.repository }}-${{ github.ref }}-${{ inputs.operation }}
       cancel-in-progress: false
     permissions:
-      actions: read
+      actions: write
       contents: write
     steps:
       - name: Resolve release operation
@@ -149,18 +152,6 @@ jobs:
               ;;
           esac
 
-      - name: Require release token for prepare
-        if: ${{ steps.mode.outputs.operation == 'prepare' && inputs.dry_run != true }}
-        shell: bash
-        env:
-          HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
-        run: |
-          set -euo pipefail
-          if [ "$HAS_RELEASE_TOKEN" != "true" ]; then
-            echo "::error::Non-dry-run prepare requires RELEASE_TOKEN so pushed tags can trigger tag-publish workflows."
-            exit 1
-          fi
-
       - name: Require Hex token for publish
         if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true }}
         shell: bash
@@ -178,7 +169,6 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
 
       - name: Checkout publish tag
         if: ${{ steps.mode.outputs.operation == 'publish' && inputs.tag_name != '' }}
@@ -383,6 +373,24 @@ jobs:
           set -euo pipefail
           git push --atomic origin "HEAD:refs/heads/${TARGET_BRANCH}" "refs/tags/${RELEASE_VERSION}"
 
+      - name: Dispatch publish workflow
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.prepared-version.outputs.version }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
+          PUBLISH_WORKFLOW: ${{ inputs.publish_workflow }}
+        run: |
+          set -euo pipefail
+          gh workflow run "$PUBLISH_WORKFLOW" \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f operation=publish \
+            -f tag_name="$RELEASE_VERSION" \
+            -f dry_run=false \
+            -f hex_dry_run=false
+
       - name: Validate publish tag matches package version
         if: ${{ steps.mode.outputs.operation == 'publish' }}
         id: package-version
@@ -470,7 +478,7 @@ jobs:
         if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && inputs.release_notes_mode == 'changelog' && steps.release-notes.outputs.has-notes == 'true' }}
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ steps.mode.outputs.tag_name }}
         run: |
           set -euo pipefail
@@ -488,7 +496,7 @@ jobs:
         if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && (inputs.release_notes_mode == 'generated' || steps.release-notes.outputs.has-notes != 'true') }}
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ steps.mode.outputs.tag_name }}
         run: |
           set -euo pipefail

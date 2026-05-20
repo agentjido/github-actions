@@ -1,6 +1,6 @@
 # Jido Package Integration Guide
 
-Use this guide to integrate a Jido package with the shared v4 GitHub Actions
+Use this guide to integrate a Jido package with the shared v5 GitHub Actions
 platform.
 
 The standard package integration adds exactly three caller workflows to the
@@ -13,13 +13,13 @@ consumer repository:
 Do not add package-local copies of the reusable workflows. Consumer repositories
 call the public workflows from this repository:
 
-- `agentjido/github-actions/.github/workflows/jido-ci.yml@v4`
-- `agentjido/github-actions/.github/workflows/jido-release.yml@v4`
-- `agentjido/github-actions/.github/workflows/jido-review.yml@v4`
+- `agentjido/github-actions/.github/workflows/jido-ci.yml@v5`
+- `agentjido/github-actions/.github/workflows/jido-release.yml@v5`
+- `agentjido/github-actions/.github/workflows/jido-review.yml@v5`
 
 ## What Not To Implement
 
-Do not add these files for the v4 package rollout:
+Do not add these files for the v5 package rollout:
 
 - `.github/workflows/elixir-ci.yml`
 - `.github/workflows/elixir-release.yml`
@@ -49,7 +49,7 @@ Create a rollout branch in the package repository:
 ```sh
 git switch main
 git pull --ff-only
-git switch -c chore/test-v4-ci
+git switch -c chore/test-v5-ci
 ```
 
 Confirm the package already has these local commands working, or decide on the
@@ -103,7 +103,7 @@ permissions:
 jobs:
   ci:
     name: CI
-    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
     secrets: inherit
     with:
       otp_versions: '["27", "28"]'
@@ -181,13 +181,13 @@ on:
         default: ""
 
 permissions:
-  actions: read
+  actions: write
   contents: write
 
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5
     with:
       operation: ${{ inputs.operation || 'auto' }}
       tag_name: ${{ inputs.tag_name || '' }}
@@ -202,18 +202,19 @@ Release uses two flows:
 
 - `prepare`: run manually with `workflow_dispatch` from a branch. This runs
   `mix git_ops.release`, creates the release commit and tag, and pushes git
-  state when `dry_run` is `false`.
-- `publish`: run automatically when a `v*` tag is pushed. This publishes the
-  existing package version to Hex and then creates the GitHub release after Hex
-  confirms the package version.
+  state when `dry_run` is `false`, then explicitly dispatches the publish
+  workflow with `GITHUB_TOKEN`.
+- `publish`: run by the prepare dispatch or by a human/external `v*` tag push.
+  This publishes the existing package version to Hex and then creates the
+  GitHub release after Hex confirms the package version.
 
 Use `operation: auto` for normal operation:
 
 - dispatch from a branch resolves to `prepare`
 - push of a `v*` tag resolves to `publish`
 
-Non-dry-run `prepare` requires a `RELEASE_TOKEN` secret. Tags pushed with the
-default `GITHUB_TOKEN` do not reliably trigger the tag-publish workflow.
+Non-dry-run `prepare` requires `actions: write` and `contents: write`
+permissions. It does not require a long-lived GitHub release token.
 
 Non-dry-run `publish` requires a `HEX_API_KEY` secret.
 
@@ -227,8 +228,11 @@ tag, GitHub release, or Hex package.
 For packages with no existing `v*` release tag, the shared release workflow
 treats `operation: prepare` as an initial release. A dry run reports the initial
 tag it would create. A real prepare creates the initial `vVERSION` tag from the
-current `mix.exs` version, then pushes the tag through the normal tag-publish
-flow.
+current `mix.exs` version, then dispatches the publish workflow.
+
+For brand-new personal Hex packages where you want long-term package-scoped
+keys, publish the first release manually or with a temporary broader Hex key,
+then rotate to a `package:PACKAGE` scoped key for later automated releases.
 
 Use `hex_dry_run: true` only with `operation: publish` and an existing
 `tag_name` when you want to exercise `mix hex.publish --dry-run` for an already
@@ -259,7 +263,7 @@ permissions:
 jobs:
   review:
     name: Jido Review
-    uses: agentjido/github-actions/.github/workflows/jido-review.yml@v4
+    uses: agentjido/github-actions/.github/workflows/jido-review.yml@v5
 ```
 
 The review lane is advisory. It writes:
@@ -306,7 +310,6 @@ Add or confirm these repository or organization secrets:
 | Secret | Required for | Notes |
 | --- | --- | --- |
 | `HEX_API_KEY` | real `publish` | Hex API key with publish rights for the package |
-| `RELEASE_TOKEN` | non-dry-run `prepare` | PAT or GitHub App token that can push commits and tags |
 
 ## Local Validation
 
@@ -339,7 +342,7 @@ If the package is using a temporary Credo threshold, replace
 Search for stale workflow references:
 
 ```sh
-rg -n 'feat/v4-workflow-platform|elixir-release.yml|elixir-lint.yml@|elixir-test.yml@|quality_command|dependency_submission|writeback|REUSE|Sobelow|sobelow' .github/workflows
+rg -n 'feat/v4-workflow-platform|elixir-release.yml|elixir-lint.yml@|elixir-test.yml@|quality_command|dependency_submission|writeback|RELEASE_TOKEN|REUSE|Sobelow|sobelow' .github/workflows
 ```
 
 This search should return no matches.
@@ -352,7 +355,7 @@ integration and any required package-quality cleanup.
 Use a conventional commit title:
 
 ```text
-ci: roll out jido workflows v4
+ci: roll out jido workflows v5
 ```
 
 The PR should show these checks:
