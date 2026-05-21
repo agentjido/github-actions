@@ -7,7 +7,7 @@ Consumer repositories import them with refs like:
 uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
 uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5
 uses: agentjido/github-actions/.github/workflows/jido-review.yml@v5
-uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5.0.0
+uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5.1.0
 ```
 
 Those refs are git refs on this repository. They version the entire repo, not individual workflow files.
@@ -15,7 +15,7 @@ Those refs are git refs on this repository. They version the entire repo, not in
 ## Versioning Contract
 
 - `@v5` is a floating major tag. It is the compatibility channel for all non-breaking v5 updates.
-- `@v5.0.0` is an exact release tag. It must stay fixed forever once published.
+- `@v5.1.0` is an exact release tag. It must stay fixed forever once published.
 - Consumers that want automatic compatible updates should use the major tag.
 - Consumers that want strict reproducibility should use an exact `vX.Y.Z` tag or a commit SHA.
 - `@main` is not a stable production pin for downstream repos.
@@ -60,6 +60,6 @@ Those refs are git refs on this repository. They version the entire repo, not in
 
 - Keep this file and `README.md` aligned on the recommended consumer pins.
 - README documents the public `jido-ci.yml`, `jido-release.yml`, and `jido-review.yml` entrypoints.
-- README documents both the floating major form (`@v5`) and an exact version form (`@v5.0.0`).
+- README documents both the floating major form (`@v5`) and an exact version form (`@v5.1.0`).
 - When a new major is introduced, update both files in the same change.
 - When README updates its exact version example, update the example here too.

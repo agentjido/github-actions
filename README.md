@@ -39,7 +39,7 @@ uses: agentjido/github-actions/.github/workflows/jido-review.yml@v5
 ## Version Pinning
 
 - `@v5`: Recommended for compatible automatic updates.
-- `@v5.0.0`: Exact v5.0.0 release, fixed forever.
+- `@v5.1.0`: Exact v5.1.0 release, fixed forever.
 - Commit SHA: Maximum reproducibility.
 - `@main`: Development branch, not a stable production pin.
 
