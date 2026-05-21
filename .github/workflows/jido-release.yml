@@ -46,6 +46,11 @@ on:
         required: false
         type: string
         default: "mix hex.audit && MIX_ENV=test mix test"
+      check_jido_deps:
+        description: Fail release when any Hex dependency named jido or jido_* is not latest
+        required: false
+        type: boolean
+        default: true
       release_notes_mode:
         description: "GitHub release notes mode: changelog or generated"
         required: false
@@ -250,6 +255,41 @@ jobs:
         with:
           mix-env: ${{ inputs.mix_env }}
           deps-cache-hit: ${{ steps.cache.outputs.deps-cache-hit }}
+
+      - name: Check Jido dependency freshness
+        if: ${{ inputs.check_jido_deps == true && inputs.skip_preflight != true && inputs.skip_tests != true }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+        run: |
+          set -euo pipefail
+
+          outdated_output="$(mktemp)"
+          jido_outdated="$(mktemp)"
+          trap 'rm -f "$outdated_output" "$jido_outdated"' EXIT
+
+          outdated_status=0
+          mix hex.outdated --all >"$outdated_output" || outdated_status=$?
+          cat "$outdated_output"
+
+          if ! grep -qE '^Dependency[[:space:]]+' "$outdated_output"; then
+            echo "::error::mix hex.outdated did not produce the expected dependency table."
+            exit "${outdated_status:-1}"
+          fi
+
+          awk '
+            /^[[:space:]]*jido(_|[[:space:]]|$)/ && $0 !~ /Up-to-date[[:space:]]*$/ {
+              print
+            }
+          ' "$outdated_output" > "$jido_outdated"
+
+          if [ -s "$jido_outdated" ]; then
+            echo "::error::Outdated Jido package dependencies found. Update these deps via PR before releasing; this workflow will not modify dependencies automatically."
+            cat "$jido_outdated"
+            exit 1
+          fi
+
+          echo "No outdated Jido package dependencies found."
 
       - name: Run preflight checks
         if: ${{ inputs.skip_preflight != true && inputs.skip_tests != true }}

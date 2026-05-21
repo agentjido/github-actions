@@ -65,6 +65,12 @@ Release preparation uses the ephemeral `GITHUB_TOKEN` to push release commits
 and tags, then explicitly dispatches the publish workflow. It does not require a
 long-lived GitHub release token.
 
+Release preflight also checks Jido ecosystem dependency freshness with
+`mix hex.outdated --all`. Only Hex packages named `jido` or `jido_*` are
+enforced; if any of those dependencies are not on the latest Hex release, the
+workflow fails and the dependency must be updated in a normal PR before
+publishing. The workflow does not modify dependencies automatically.
+
 ## Release Contract
 
 - Publish a new exact `vX.Y.Z` tag for every downstream-facing workflow change.

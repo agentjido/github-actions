@@ -60,6 +60,7 @@ mix deps.get
 mix format --check-formatted
 MIX_ENV=test mix compile --warnings-as-errors
 mix hex.audit
+mix hex.outdated --all || true
 mix credo --strict
 mix dialyzer
 mix deps.unlock --check-unused
@@ -327,6 +328,7 @@ Run the package checks that CI will enforce:
 mix format --check-formatted
 MIX_ENV=test mix compile --warnings-as-errors
 mix hex.audit
+mix hex.outdated --all || true
 mix credo --strict
 mix dialyzer
 mix deps.unlock --check-unused
@@ -338,6 +340,13 @@ HEX_API_KEY=dry-run mix hex.publish --dry-run --yes
 If the package is using a temporary Credo threshold, replace
 `mix credo --strict` with the exact `credo_command` configured in
 `.github/workflows/ci.yml`.
+
+`mix hex.outdated --all` exits non-zero for any outdated dependency, so the
+local command above is inspection-oriented. The release workflow runs it as a
+targeted freshness gate and fails only when a Hex dependency named `jido` or
+`jido_*` is not on its latest Hex release. Fix those failures by updating the
+dependency in a normal PR before publishing; the release workflow intentionally
+does not run `mix deps.update` or rewrite lockfiles.
 
 Search for stale workflow references:
 
