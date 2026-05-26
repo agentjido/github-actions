@@ -192,33 +192,19 @@ jobs:
 
       - name: Resolve workflow platform ref
         id: platform-ref
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
+        env:
+          JOB_CONTEXT: ${{ toJson(job) }}
         run: |
           set -euo pipefail
-          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
-          workflow_path="$(
-            printf '%s' "$run_json" \
-              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .path' \
-              | head -n 1
-          )"
-          workflow_ref="$(
-            printf '%s' "$run_json" \
-              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .ref // empty' \
-              | head -n 1
-          )"
-          workflow_sha="$(
-            printf '%s' "$run_json" \
-              | jq -r '(.referenced_workflows // [])[] | select(.path | test("/\\.github/workflows/jido-release\\.yml@")) | .sha // empty' \
-              | head -n 1
-          )"
-          if [ -z "$workflow_path" ]; then
-            echo "::error::Unable to resolve the reusable workflow repository for run ${{ github.run_id }}."
+          workflow_repository="$(jq -r '.workflow_repository // empty' <<< "$JOB_CONTEXT")"
+          workflow_sha="$(jq -r '.workflow_sha // empty' <<< "$JOB_CONTEXT")"
+          if [ -z "$workflow_repository" ] || [ -z "$workflow_sha" ]; then
+            echo "::error::Unable to resolve reusable workflow repository/sha from the job context."
             exit 1
           fi
-          echo "repository=${workflow_path%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
-          echo "ref=${workflow_ref:-$workflow_sha}" >> "$GITHUB_OUTPUT"
+          echo "repository=$workflow_repository" >> "$GITHUB_OUTPUT"
+          echo "ref=$workflow_sha" >> "$GITHUB_OUTPUT"
 
       - name: Checkout workflow platform
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
