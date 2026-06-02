@@ -107,15 +107,15 @@ jobs:
     uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
     secrets: inherit
     with:
-      otp_versions: '["27", "28"]'
-      elixir_versions: '["1.18", "1.19"]'
-      # Optional: keep this lane on the latest exact Elixir release-candidate tag.
-      experimental_compile_elixir_versions: '["<latest-elixir-rc-tag>"]'
-      experimental_compile_otp_versions: '["<matching-otp-version>"]'
-      experimental_compile_otp_name: '<otp-major>'
       docs_command: mix docs -f html
       test_command: mix test
 ```
+
+`jido-ci.yml` owns the default test matrix and non-blocking experimental
+compile lane. Standard packages should omit those inputs and inherit the
+central defaults. Add `otp_versions`, `elixir_versions`, or
+`experimental_compile_*` inputs only when a repository needs a deliberate
+override.
 
 If the package needs a temporary Credo threshold, add exactly one
 `credo_command` line under `with:`:
@@ -383,7 +383,7 @@ The PR should show these checks:
 - `CI / Test / 27 - 1.19`
 - `CI / Test / 28 - 1.18`
 - `CI / Test / 28 - 1.19`
-- `CI / Test / <matching-otp-version> - <latest-elixir-rc-tag> (experimental compile)`
+- `CI / Test / 29.0.1 - v1.20.0-rc.6 (experimental compile)`
 - `CI / Summary`
 - `Jido Review / Jido Review`
 

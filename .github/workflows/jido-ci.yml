@@ -35,17 +35,17 @@ on:
         description: JSON array of exact compile-only Elixir versions allowed to fail
         required: false
         type: string
-        default: "[]"
+        default: '["v1.20.0-rc.6"]'
       experimental_compile_otp_versions:
         description: Optional JSON array of OTP versions for experimental compile checks
         required: false
         type: string
-        default: ""
+        default: '["29.0.1"]'
       experimental_compile_otp_name:
         description: Optional label for experimental compile OTP versions
         required: false
         type: string
-        default: ""
+        default: "29"
       test_mix_env:
         description: MIX_ENV for the test lane
         required: false
@@ -267,5 +267,7 @@ jobs:
             echo "- Quality toolchain: OTP ${{ inputs.quality_otp_version }}, Elixir ${{ inputs.quality_elixir_version }}"
             echo "- Test matrix OTPs: ${{ inputs.otp_versions }}"
             echo "- Test matrix Elixirs: ${{ inputs.elixir_versions }}"
+            echo "- Experimental compile Elixirs: ${{ inputs.experimental_compile_elixir_versions }}"
+            echo "- Experimental compile OTPs: ${{ inputs.experimental_compile_otp_versions }}"
             echo "- Docs: ${{ inputs.docs }}"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -22,17 +22,17 @@ on:
         description: 'JSON array of optional exact compile-only Elixir versions that are allowed to fail'
         required: false
         type: string
-        default: '[]'
+        default: '["v1.20.0-rc.6"]'
       experimental_compile_otp_versions:
         description: 'Optional JSON array of OTP versions for experimental compile-only checks; defaults to otp_versions'
         required: false
         type: string
-        default: ''
+        default: '["29.0.1"]'
       experimental_compile_otp_name:
         description: 'Optional display label for experimental compile OTP versions; defaults to the exact OTP version'
         required: false
         type: string
-        default: ''
+        default: '29'
       mix_env:
         description: 'MIX_ENV for tests'
         required: false
@@ -139,6 +139,7 @@ jobs:
     # GitHub check rendering misformats conditional fallback expressions in reusable workflow job names.
     name: ${{ matrix.otp }} - ${{ matrix.elixir }} (experimental compile)
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
+    continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
