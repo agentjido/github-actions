@@ -63,3 +63,7 @@ Those refs are git refs on this repository. They version the entire repo, not in
 - README documents both the floating major form (`@v5`) and an exact version form (`@v5.1.0`).
 - When a new major is introduced, update both files in the same change.
 - When README updates its exact version example, update the example here too.
+
+## Release Hygiene
+
+- Do not modify `CHANGELOG.md`; release notes are generated from Git history during release, so keep changes focused on proper Conventional Commits.
