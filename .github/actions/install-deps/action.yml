@@ -52,5 +52,9 @@ runs:
       env:
         MIX_ENV: ${{ inputs.mix-env }}
       run: |
-        set -euo pipefail
+        set -uo pipefail
+        echo "::remove-matcher owner=elixir-mixCompileWarning::"
         ${{ inputs.deps-compile-command }}
+        status="$?"
+        echo "::add-matcher::$GITHUB_ACTION_PATH/elixir-compile-warning-matcher.json"
+        exit "$status"

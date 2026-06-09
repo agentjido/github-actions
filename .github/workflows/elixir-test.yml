@@ -177,8 +177,8 @@ jobs:
           ${{ inputs.test_command }}
 
   experimental-compile:
-    # GitHub check rendering misformats conditional fallback expressions in reusable workflow job names.
-    name: ${{ matrix.otp }} - ${{ matrix.elixir }} (experimental compile)
+    # Keep this name static so skipped jobs do not render unresolved matrix expressions.
+    name: Experimental Compile
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     continue-on-error: true
     runs-on: ubuntu-24.04
