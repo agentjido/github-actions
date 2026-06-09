@@ -3,10 +3,10 @@ description: Restore Beam tool, dependency, build, and optional PLT caches.
 
 inputs:
   otp-version:
-    description: OTP version used in the cache key
+    description: Requested OTP version; the exact installed version is used in the cache key
     required: true
   elixir-version:
-    description: Elixir version used in the cache key
+    description: Requested Elixir version; the exact installed version is used in the cache key
     required: true
   mix-env:
     description: MIX_ENV used in the dependency cache key
@@ -32,19 +32,54 @@ outputs:
   plt-cache-hit:
     description: Whether the PLT cache was restored
     value: ${{ steps.plt-cache.outputs.cache-hit }}
+  resolved-otp-version:
+    description: Exact installed OTP version used in cache keys
+    value: ${{ steps.beam-versions.outputs.otp-version }}
+  resolved-elixir-version:
+    description: Exact installed Elixir version used in cache keys
+    value: ${{ steps.beam-versions.outputs.elixir-version }}
 
 runs:
   using: composite
   steps:
+    - name: Resolve Beam cache versions
+      id: beam-versions
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        otp_release="$(erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().')"
+        otp_root="$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().')"
+        otp_version_file="${otp_root}/releases/${otp_release}/OTP_VERSION"
+
+        if [ -f "$otp_version_file" ]; then
+          otp_version="$(tr -d '\r\n' < "$otp_version_file")"
+        else
+          otp_version="$otp_release"
+        fi
+
+        elixir_version="$(elixir -e 'IO.write(System.version())')"
+
+        sanitize_version() {
+          printf '%s' "$1" | sed -E 's/[^A-Za-z0-9._-]+/_/g'
+        }
+
+        otp_version="$(sanitize_version "$otp_version")"
+        elixir_version="$(sanitize_version "$elixir_version")"
+
+        echo "otp-version=$otp_version" >> "$GITHUB_OUTPUT"
+        echo "elixir-version=$elixir_version" >> "$GITHUB_OUTPUT"
+        echo "Using exact Beam cache versions: OTP $otp_version / Elixir $elixir_version"
+
     - name: Restore Hex and Mix cache
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: |
           ~/.hex
           ~/.mix
-        key: ${{ runner.os }}-beamtools-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-${{ hashFiles('mix.lock') }}
+        key: ${{ runner.os }}-beamtools-otp${{ steps.beam-versions.outputs.otp-version }}-elixir${{ steps.beam-versions.outputs.elixir-version }}-${{ hashFiles('mix.lock') }}
         restore-keys: |
-          ${{ runner.os }}-beamtools-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-
+          ${{ runner.os }}-beamtools-otp${{ steps.beam-versions.outputs.otp-version }}-elixir${{ steps.beam-versions.outputs.elixir-version }}-
 
     - name: Restore deps and build cache
       if: ${{ inputs.restore-deps == 'true' }}
@@ -54,9 +89,9 @@ runs:
         path: |
           deps
           _build
-        key: ${{ runner.os }}-mix-${{ inputs.mix-env }}-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-${{ hashFiles('mix.lock') }}
+        key: ${{ runner.os }}-mix-${{ inputs.mix-env }}-otp${{ steps.beam-versions.outputs.otp-version }}-elixir${{ steps.beam-versions.outputs.elixir-version }}-${{ hashFiles('mix.lock') }}
         restore-keys: |
-          ${{ runner.os }}-mix-${{ inputs.mix-env }}-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-
+          ${{ runner.os }}-mix-${{ inputs.mix-env }}-otp${{ steps.beam-versions.outputs.otp-version }}-elixir${{ steps.beam-versions.outputs.elixir-version }}-
 
     - name: Create PLT directory
       if: ${{ inputs.restore-plt == 'true' }}
@@ -69,6 +104,6 @@ runs:
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ${{ inputs.plt-path }}
-        key: ${{ runner.os }}-plt-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-${{ hashFiles('mix.lock', 'mix.exs') }}
+        key: ${{ runner.os }}-plt-otp${{ steps.beam-versions.outputs.otp-version }}-elixir${{ steps.beam-versions.outputs.elixir-version }}-${{ hashFiles('mix.lock', 'mix.exs') }}
         restore-keys: |
-          ${{ runner.os }}-plt-otp${{ inputs.otp-version }}-elixir${{ inputs.elixir-version }}-
+          ${{ runner.os }}-plt-otp${{ steps.beam-versions.outputs.otp-version }}-elixir${{ steps.beam-versions.outputs.elixir-version }}-

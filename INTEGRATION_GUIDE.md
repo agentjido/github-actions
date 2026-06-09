@@ -372,6 +372,7 @@ The PR should show these checks:
 
 - `CI / Resolve Platform`
 - `CI / Compile`
+- `CI / Prepare Quality Cache`
 - `CI / Quality / Audit`
 - `CI / Quality / Changelog Guard`
 - `CI / Quality / Credo`
@@ -381,10 +382,9 @@ The PR should show these checks:
 - `CI / Quality / Hex Package Dry Run`
 - `CI / Quality / Unused Deps`
 - `CI / Test / 27 - 1.18`
-- `CI / Test / 27 - 1.19`
 - `CI / Test / 28 - 1.18`
 - `CI / Test / 28 - 1.19`
-- `CI / Test / 29.0.1 - v1.20.0-rc.6 (experimental compile)`
+- `CI / Test / 29 - 1.20`
 - `CI / Summary`
 - `Jido Review / Jido Review`
 

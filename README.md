@@ -6,7 +6,7 @@ Reusable GitHub Actions workflows for Elixir CI/CD across the Jido ecosystem.
 
 | Workflow | Purpose | Public API |
 | --- | --- | --- |
-| `jido-ci.yml` | Read-only Jido CI: compile gate, split quality jobs, test matrix, docs, package checks | Yes |
+| `jido-ci.yml` | Read-only Jido CI: compile gate, quality cache prep, split quality jobs, test matrix, docs, package checks | Yes |
 | `jido-release.yml` | Dispatch-driven Hex publish and git_ops release preparation | Yes |
 | `jido-review.yml` | Advisory pull request review packet, artifacts, summary, and optional sticky comment | Yes |
 | `elixir-quality.yml` | Internal quality building block used by `jido-ci.yml` | No |
