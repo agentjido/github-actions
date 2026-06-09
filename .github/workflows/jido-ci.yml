@@ -10,37 +10,42 @@ on:
         description: OTP version for the quality lane
         required: false
         type: string
-        default: "28"
+        default: "29"
       quality_elixir_version:
         description: Elixir version for the quality lane
         required: false
         type: string
-        default: "1.19"
+        default: "1.20"
       quality_mix_env:
         description: MIX_ENV for the quality lane
         required: false
         type: string
         default: "dev"
       otp_versions:
-        description: JSON array of OTP versions for the test matrix
+        description: Legacy JSON array of OTP versions for the test matrix fallback
         required: false
         type: string
         default: '["27", "28"]'
       elixir_versions:
-        description: JSON array of Elixir versions for the test matrix
+        description: Legacy JSON array of Elixir versions for the test matrix fallback
         required: false
         type: string
         default: '["1.18", "1.19"]'
+      test_matrix:
+        description: JSON array of explicit required test matrix pairs
+        required: false
+        type: string
+        default: ""
       experimental_compile_elixir_versions:
         description: JSON array of exact compile-only Elixir versions allowed to fail
         required: false
         type: string
-        default: '["v1.20.0-rc.6"]'
+        default: "[]"
       experimental_compile_otp_versions:
         description: Optional JSON array of OTP versions for experimental compile checks
         required: false
         type: string
-        default: '["29.0.1"]'
+        default: "[]"
       experimental_compile_otp_name:
         description: Optional label for experimental compile OTP versions
         required: false
@@ -235,6 +240,7 @@ jobs:
     with:
       otp_versions: ${{ inputs.otp_versions }}
       elixir_versions: ${{ inputs.elixir_versions }}
+      test_matrix: ${{ inputs.test_matrix }}
       experimental_compile_elixir_versions: ${{ inputs.experimental_compile_elixir_versions }}
       experimental_compile_otp_versions: ${{ inputs.experimental_compile_otp_versions }}
       experimental_compile_otp_name: ${{ inputs.experimental_compile_otp_name }}
@@ -258,6 +264,8 @@ jobs:
     steps:
       - name: Report CI summary
         shell: bash
+        env:
+          TEST_MATRIX: ${{ inputs.test_matrix }}
         run: |
           {
             echo "## Jido CI Summary"
@@ -265,6 +273,11 @@ jobs:
             echo "- Quality: ${{ needs.quality.result }}"
             echo "- Test: ${{ needs.test.result }}"
             echo "- Quality toolchain: OTP ${{ inputs.quality_otp_version }}, Elixir ${{ inputs.quality_elixir_version }}"
+            if [ -n "$TEST_MATRIX" ]; then
+              echo "- Test matrix: $TEST_MATRIX"
+            else
+              echo "- Test matrix: default compatible pairs"
+            fi
             echo "- Test matrix OTPs: ${{ inputs.otp_versions }}"
             echo "- Test matrix Elixirs: ${{ inputs.elixir_versions }}"
             echo "- Experimental compile Elixirs: ${{ inputs.experimental_compile_elixir_versions }}"

@@ -1,7 +1,8 @@
 # Reusable Elixir Test Workflow
 # Internal building block for .github/workflows/jido-ci.yml.
 #
-# Supports version matrix testing via otp_versions and elixir_versions inputs.
+# Supports explicit pair matrix testing via test_matrix, with legacy
+# otp_versions and elixir_versions cross-product fallback.
 
 name: Elixir Test
 
@@ -9,25 +10,30 @@ on:
   workflow_call:
     inputs:
       otp_versions:
-        description: 'JSON array of OTP versions'
+        description: 'Legacy JSON array of OTP versions for the test matrix fallback'
         required: false
         type: string
         default: '["27", "28"]'
       elixir_versions:
-        description: 'JSON array of Elixir versions'
+        description: 'Legacy JSON array of Elixir versions for the test matrix fallback'
         required: false
         type: string
         default: '["1.18", "1.19"]'
+      test_matrix:
+        description: 'JSON array of explicit required test matrix pairs'
+        required: false
+        type: string
+        default: ''
       experimental_compile_elixir_versions:
         description: 'JSON array of optional exact compile-only Elixir versions that are allowed to fail'
         required: false
         type: string
-        default: '["v1.20.0-rc.6"]'
+        default: '[]'
       experimental_compile_otp_versions:
         description: 'Optional JSON array of OTP versions for experimental compile-only checks; defaults to otp_versions'
         required: false
         type: string
-        default: '["29.0.1"]'
+        default: '[]'
       experimental_compile_otp_name:
         description: 'Optional display label for experimental compile OTP versions; defaults to the exact OTP version'
         required: false
@@ -63,8 +69,44 @@ on:
         default: '.github-actions-platform'
 
 jobs:
+  resolve-test-matrix:
+    name: Resolve Test Matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+
+    outputs:
+      test_matrix: ${{ steps.matrix.outputs.test_matrix }}
+
+    steps:
+      - name: Resolve required test matrix
+        id: matrix
+        shell: bash
+        env:
+          TEST_MATRIX: ${{ inputs.test_matrix }}
+          OTP_VERSIONS: ${{ inputs.otp_versions }}
+          ELIXIR_VERSIONS: ${{ inputs.elixir_versions }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$TEST_MATRIX" ] && [ "$TEST_MATRIX" != "[]" ]; then
+            matrix="$(jq -c . <<< "$TEST_MATRIX")"
+          elif [ "$OTP_VERSIONS" = '["27", "28"]' ] && [ "$ELIXIR_VERSIONS" = '["1.18", "1.19"]' ]; then
+            matrix='[{"otp":"27","elixir":"1.18"},{"otp":"28","elixir":"1.18"},{"otp":"28","elixir":"1.19"},{"otp":"29","elixir":"1.20"}]'
+          else
+            matrix="$(jq -cn \
+              --argjson otps "$OTP_VERSIONS" \
+              --argjson elixirs "$ELIXIR_VERSIONS" \
+              '[ $otps[] as $otp | $elixirs[] as $elixir | {otp: $otp, elixir: $elixir} ]')"
+          fi
+
+          echo "test_matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   test:
     name: ${{ matrix.otp }} - ${{ matrix.elixir }}
+    needs: resolve-test-matrix
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -74,8 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        otp: ${{ fromJson(inputs.otp_versions) }}
-        elixir: ${{ fromJson(inputs.elixir_versions) }}
+        include: ${{ fromJson(needs.resolve-test-matrix.outputs.test_matrix) }}
 
     env:
       MIX_ENV: ${{ inputs.mix_env }}

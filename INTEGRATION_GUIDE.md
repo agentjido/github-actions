@@ -111,11 +111,12 @@ jobs:
       test_command: mix test
 ```
 
-`jido-ci.yml` owns the default test matrix and non-blocking experimental
-compile lane. Standard packages should omit those inputs and inherit the
-central defaults. Add `otp_versions`, `elixir_versions`, or
-`experimental_compile_*` inputs only when a repository needs a deliberate
-override.
+`jido-ci.yml` owns the default test matrix. Standard packages should omit those
+inputs and inherit the central defaults: quality runs on Elixir 1.20 / OTP 29,
+and required tests run Elixir 1.18 / OTP 27, Elixir 1.18 / OTP 28,
+Elixir 1.19 / OTP 28, and Elixir 1.20 / OTP 29. Add `test_matrix`,
+`otp_versions`, `elixir_versions`, or `experimental_compile_*` inputs only
+when a repository needs a deliberate override.
 
 If the package needs a temporary Credo threshold, add exactly one
 `credo_command` line under `with:`:

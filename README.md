@@ -37,10 +37,16 @@ uses: agentjido/github-actions/.github/workflows/jido-review.yml@v5
 ```
 
 `jido-ci.yml` owns the default BEAM matrix for standard packages. Callers
-should omit `otp_versions`, `elixir_versions`, and `experimental_compile_*`
-unless the repository needs a deliberate override. The default required matrix
-tracks OTP 27/28 and Elixir 1.18/1.19; the non-blocking experimental compile
-lane tracks Elixir v1.20.0-rc.6 on OTP 29.0.1.
+should omit `test_matrix`, `otp_versions`, `elixir_versions`, and
+`experimental_compile_*` unless the repository needs a deliberate override.
+The default quality lane uses Elixir 1.20 on OTP 29. The default required test
+matrix keeps the package baseline at Elixir 1.18 while testing compatible
+latest toolchains:
+
+- Elixir 1.18 / OTP 27
+- Elixir 1.18 / OTP 28
+- Elixir 1.19 / OTP 28
+- Elixir 1.20 / OTP 29
 
 ## Version Pinning
 
