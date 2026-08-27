@@ -105,7 +105,6 @@ jobs:
   ci:
     name: CI
     uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
-    secrets: inherit
     with:
       docs_command: mix docs -f html
       test_command: mix test
@@ -133,6 +132,45 @@ or:
 
 Keep CI read-only. Do not add `contents: write`, `pull-requests: write`,
 dependency submission, write-back, Sobelow, or REUSE behavior to this workflow.
+
+### CI input for checked release staging
+
+If the package enables checked release staging, add this trusted dispatch input
+to the CI caller:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      release_validation:
+        description: Trusted metadata from the release workflow
+        required: false
+        type: string
+        default: ""
+```
+
+Pass the metadata and a fixed package command to `jido-ci.yml`:
+
+```yaml
+    with:
+      release_validation: ${{ inputs.release_validation || '' }}
+      generated_release_command: .github/scripts/validate-generated-release.sh
+```
+
+The package command must validate the exact GitOps output. It must fail for a
+manual changelog edit or an extra generated change. The shared gate exports
+`RELEASE_PARENT_SHA`, `RELEASE_SHA`, `RELEASE_TREE_SHA`, `RELEASE_TAG`,
+`RELEASE_CHANGELOG_BEFORE_SHA`, and `RELEASE_CHANGELOG_AFTER_SHA` for this
+command. Keep the command fixed in both the CI caller and release caller. Do
+not take it from a dispatch input. The checked prepare run records the command
+identity. The validation gate requires the CI input to have the same identity.
+
+The validation caller must keep only `actions: read` and `contents: read`. Do
+not use `secrets: inherit`. Any package-local validation job must check out
+`ref: ${{ github.sha }}`. The shared gate also checks that the selected CI
+workflow and the caller validation script did not change between the release
+parent and generated commit. It rejects all changed files outside the trusted
+release allowlist before it runs the caller command.
 
 ## File 2: `.github/workflows/release.yml`
 
@@ -181,6 +219,16 @@ on:
         required: false
         type: string
         default: ""
+      staged_prepare:
+        description: "Validate the generated commit before protected-branch promotion"
+        required: false
+        type: boolean
+        default: false
+      staging_branch_prefix:
+        description: "Owned release staging branch prefix"
+        required: false
+        type: string
+        default: "release/gitops/"
 
 permissions:
   actions: write
@@ -197,12 +245,16 @@ jobs:
       hex_dry_run: ${{ inputs.hex_dry_run || false }}
       skip_tests: ${{ inputs.skip_tests || false }}
       version_override: ${{ inputs.version_override || '' }}
-    secrets: inherit
+      staged_prepare: ${{ inputs.staged_prepare || false }}
+      staging_branch_prefix: ${{ inputs.staging_branch_prefix || 'release/gitops/' }}
+    secrets:
+      HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 ```
 
 Release uses two flows:
 
-- `prepare`: run manually with `workflow_dispatch` from a branch. This runs
+- `prepare`: run manually with `workflow_dispatch` from the current repository
+  default branch. This runs
   `mix git_ops.release`, creates the release commit and tag, and pushes git
   state when `dry_run` is `false`, then explicitly dispatches the publish
   workflow with `GITHUB_TOKEN`.
@@ -212,7 +264,7 @@ Release uses two flows:
 
 Use `operation: auto` for normal operation:
 
-- dispatch from a branch resolves to `prepare`
+- dispatch from the current default branch resolves to `prepare`
 - push of a `v*` tag resolves to `publish`
 
 Non-dry-run `prepare` requires `actions: write` and `contents: write`
@@ -232,6 +284,13 @@ treats `operation: prepare` as an initial release. A dry run reports the initial
 tag it would create. A real prepare creates the initial `vVERSION` tag from the
 current `mix.exs` version, then dispatches the publish workflow.
 
+In direct mode, prepare keeps the initial lightweight tag behavior from the
+earlier v5 flow, and the dispatched direct publish accepts that exact legacy
+tag. Direct prepare also keeps the earlier source-branch behavior. In checked
+mode, the workflow creates one empty conventional release commit when GitOps
+has no release commit, then creates the local annotated tag at that commit.
+This keeps `R^ = P` before state recording.
+
 For brand-new personal Hex packages where you want long-term package-scoped
 keys, publish the first release manually or with a temporary broader Hex key,
 then rotate to a `package:PACKAGE` scoped key for later automated releases.
@@ -239,6 +298,131 @@ then rotate to a `package:PACKAGE` scoped key for later automated releases.
 Use `hex_dry_run: true` only with `operation: publish` and an existing
 `tag_name` when you want to exercise `mix hex.publish --dry-run` for an already
 prepared tag.
+
+## Checked Release Configuration
+
+Checked staging is opt-in. `staged_prepare: false` keeps the direct v5 prepare
+flow. To enable the checked flow, first add the trusted CI dispatch input and
+package validation command from the CI section. Then set these fixed inputs on
+the release job:
+
+```yaml
+    with:
+      staged_prepare: ${{ inputs.staged_prepare || false }}
+      validation_workflow: ci.yml
+      required_checks: >-
+        ["CI / Summary"]
+      release_changed_files: >-
+        ["CHANGELOG.md","README.md","mix.exs"]
+      generated_release_command: .github/scripts/validate-generated-release.sh
+      staging_branch_prefix: ${{ inputs.staging_branch_prefix || 'release/gitops/' }}
+      validation_timeout_seconds: 2700
+```
+
+List each job that must have literal `success` in the dispatched validation
+run. Use the exact job name. The complete validation workflow run must also
+have `success`. The gate reads jobs from the exact run ID and first run
+attempt. A same-name job from another run cannot satisfy the policy. A missing,
+pending, skipped, neutral, cancelled, failed, stale, or timed-out job stops
+promotion.
+
+`release_changed_files` is a fixed, repository-owned allowlist. Use the default
+`["CHANGELOG.md","mix.exs"]` when GitOps changes only those files. Add
+`README.md` only when the trusted parent GitOps configuration manages the
+README version. Workflow, validator, `.github`, and script changes are always
+rejected. The workflow records one digest for the required jobs, allowlist, and
+exact validation command. That policy cannot change during one release run.
+
+Do not pass secrets to the CI dispatch. Do not add a PAT, GitHub App secret,
+Administration permission, admin bypass, release PR, or protection change.
+Reusable workflows cannot add permissions that the caller did not grant.
+
+### Checked state flow
+
+The prepare run uses these identities:
+
+- `P`: exact target-branch parent before generation
+- `R`: one generated GitOps commit whose only parent is `P`
+- `A`: one annotated tag object whose internal name is `V` and whose direct commit target is `R`
+- `B`: deterministic `release/gitops/VERSION` branch
+- `V`: returned validation run ID
+- `U`: returned publish run ID
+
+Before version planning, the workflow checks `P`, the default branch, all
+branches under the owned staging prefix, and the durable state marker for `P`.
+This stops a hard-loss retry before it can call the release planner. After the
+planner derives the intended version, a second precheck validates the tag and
+ref syntax and refuses the exact `B`, remote tag, or state marker before GitOps
+generation. The complete prepare validation runs again after generation.
+
+The workflow saves a private manifest and Git bundle before it changes a remote
+ref. It records push intent, then uses an absent-ref lease and porcelain server
+response to push only `B` at `R`. Cleanup ownership starts only when the
+successful response explicitly reports a new branch. An up-to-date response is
+pre-existing state. A lost response is uncertain state and does not grant
+cleanup rights. Explicit `--no-follow-tags` behavior keeps `A` local even when
+a runner has `push.followTags=true`. It dispatches the exact CI workflow on `B`
+and records `V`. The trusted gate requires the repository, ref, `github.sha`, checkout SHA,
+parent, tree, changelog blobs, workflow file, changed-file allowlist, and command
+identity to match the recorded state before caller validation runs.
+
+Before state recording, the workflow also requires the local version tag to be
+exactly one annotated object. Its internal `tag` header must equal `V`, its
+direct target type must be `commit`, and its direct target must be `R`. It
+records this shape and checks the same local object again before promotion and
+publish dispatch. Nested annotated tags and mismatched internal names stop
+before staging.
+
+After the full run and configured jobs succeed on `R`, the workflow rechecks
+the repository default branch, `P`, `B`, tag absence, the exact run attempt,
+the jobs, and the fixed policy. It atomically fast-forwards the default branch
+to `R`, pushes the existing local tag ref at `A`, and deletes `B`. Exact leases
+protect all three refs. It verifies `A` and its peeled `R`, dispatches publish
+once, and records `U`.
+
+The workflow does not read or snapshot branch protection. The caller-supplied
+`required_checks` JSON is the exact validation policy. If repository protection
+adds a new required check during prepare, the final protected atomic push safely
+rejects the transaction. This requires no Administration permission.
+
+### Failure and recovery
+
+| State | Result | Recovery |
+| --- | --- | --- |
+| Failure before `B` is pushed | No remote release state | Fix the cause. A saved state artifact can still block a repeated version. |
+| Failure after the server confirms this run created `B` | Main and tag stay unchanged | Automatic cleanup deletes only this run's owned `B` at `R`. It refuses a changed branch or invalid ownership record. |
+| Pre-existing `B`, including `B = R` | Main and tag stay unchanged | Stop. An up-to-date push result does not grant ownership and does not delete the branch. |
+| Lost staging-push response or runner loss | `B` can remain; the private state artifact remains | Do not regenerate the commit. Ownership is uncertain, so automatic cleanup is refused. The branch and artifact block another prepare. |
+| Atomic promotion rejection | Main, tag, and `B` all stay unchanged | Fix the external cause, then use owned pre-promotion cleanup only when the run recorded server-confirmed branch creation. |
+| Failure after promotion | Main and annotated tag are final | Do not run prepare. Run publish-only recovery for the existing tag. |
+| Dispatch response without a run ID | The dispatch result is uncertain | Do not dispatch again automatically. Inspect Actions and use the recorded state. |
+
+For publish-only recovery, run the Release workflow with `operation: publish`,
+the existing `tag_name`, `staged_prepare: true`, and the same staging branch
+prefix. Recovery validates the remote annotated tag, its reachability from the
+target branch, and package/tag equality before it changes package state.
+
+Publish recovery uses this state table:
+
+| Hex version | GitHub release | Action |
+| --- | --- | --- |
+| absent | absent | Publish Hex once, confirm it, then create the GitHub release. |
+| present | absent | Skip Hex and create the GitHub release. |
+| present | present | Leave both states unchanged and report success. |
+| absent | present | Stop because the state is inconsistent. |
+
+Publish runs use tag-based concurrency. A failed or uncertain upload is not
+retried in the same run. Start publish-only recovery only after you check the
+external Hex and GitHub state.
+
+In checked mode, the release job validates its source before checkout or Mix
+execution. Prepare accepts only the current default-branch SHA. Publish accepts
+only an existing annotated version tag whose peeled commit is reachable from
+the current default branch. A feature branch, stale branch SHA, lightweight
+tag, unrelated tag, or unreachable tag stops before release code, write API
+calls, or secret-dependent steps. Direct mode keeps the earlier branch,
+lightweight initial tag, Hex upload, and GitHub release edit behavior when
+`staged_prepare` is `false`.
 
 ## File 3: `.github/workflows/review.yml`
 
@@ -417,6 +601,19 @@ To simulate publish packaging, use an existing `v*` tag:
 
 Expected result: the workflow checks out the tag, validates the package version,
 runs the Hex publish dry run, and does not create a real Hex release.
+
+## Checked-Staging Rollout
+
+Use this order for the v5.2 checked-staging rollout:
+
+1. Review and merge the shared workflow change without moving a tag.
+2. Create the exact annotated `v5.2.0` tag on the merged shared commit.
+3. Move the floating `v5` tag to the same commit only after compatibility checks pass.
+4. Update a consumer to the exact `@v5.2.0` pin in a separate PR.
+5. Run the consumer dry proof and full CI before its first checked release.
+
+Do not change `v5.1.4` or an older exact tag. Do not create or move `v5.2.0`
+from a feature branch.
 
 ## Current Rollout PRs
 
