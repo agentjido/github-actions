@@ -1,0 +1,49 @@
+name: Release Self-Test
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/**"
+      - ".github/tests/**"
+      - ".github/workflows/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/scripts/**"
+      - ".github/tests/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-fixtures:
+    name: Release Fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Compile release scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/scripts/*.py
+
+      - name: Run local release fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s .github/tests -p 'test_*.py' -v
+
+      - name: Check patches for whitespace errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check HEAD^ HEAD
