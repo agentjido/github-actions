@@ -76,6 +76,16 @@ on:
         required: false
         type: string
         default: "mix docs"
+      release_validation:
+        description: Trusted checked-release metadata from workflow_dispatch
+        required: false
+        type: string
+        default: ""
+      generated_release_command:
+        description: Trusted caller command that validates exact generated release output
+        required: false
+        type: string
+        default: ""
       workflow_platform_repository:
         description: Internal workflow platform repository
         required: true
@@ -91,8 +101,49 @@ on:
         default: ".github-actions-platform"
 
 jobs:
+  release-validation:
+    name: Release Validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Confirm ordinary quality mode
+        if: ${{ inputs.release_validation == '' }}
+        shell: bash
+        run: echo "Checked-release validation was not requested."
+
+      - name: Checkout exact generated release commit
+        if: ${{ inputs.release_validation != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Checkout workflow platform
+        if: ${{ inputs.release_validation != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.workflow_platform_repository }}
+          ref: ${{ inputs.workflow_platform_ref }}
+          path: ${{ inputs.workflow_platform_path }}
+
+      - name: Validate trusted generated release
+        if: ${{ inputs.release_validation != '' }}
+        shell: bash
+        env:
+          RELEASE_VALIDATION: ${{ inputs.release_validation }}
+          GENERATED_RELEASE_COMMAND: ${{ inputs.generated_release_command }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/validate_generated_release.py \
+            --metadata "$RELEASE_VALIDATION" \
+            --command "$GENERATED_RELEASE_COMMAND"
+
   changelog-guard:
     name: Changelog Guard
+    needs: release-validation
     runs-on: ubuntu-24.04
     if: ${{ inputs.changelog_guard && github.event_name == 'pull_request' }}
     permissions:
@@ -135,6 +186,7 @@ jobs:
 
   audit:
     name: Audit
+    needs: release-validation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -181,6 +233,7 @@ jobs:
 
   format:
     name: Format
+    needs: release-validation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -227,6 +280,7 @@ jobs:
 
   credo:
     name: Credo
+    needs: release-validation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -275,6 +329,7 @@ jobs:
 
   dialyzer:
     name: Dialyzer
+    needs: release-validation
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -324,6 +379,7 @@ jobs:
 
   unused-deps:
     name: Unused Deps
+    needs: release-validation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -370,6 +426,7 @@ jobs:
 
   hex-package-dry-run:
     name: Hex Package Dry Run
+    needs: release-validation
     if: ${{ inputs.validate_hex_package }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -412,7 +469,7 @@ jobs:
       - name: Validate Hex package
         shell: bash
         env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          HEX_API_KEY: ${{ inputs.release_validation == '' && secrets.HEX_API_KEY || '' }}
           MIX_ENV: dev
         run: |
           set -euo pipefail
@@ -420,6 +477,7 @@ jobs:
 
   docs:
     name: Docs
+    needs: release-validation
     if: ${{ inputs.docs }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

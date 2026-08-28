@@ -77,18 +77,53 @@ on:
         type: boolean
         default: false
       publish_workflow:
-        description: Caller workflow file or ID to dispatch after a successful prepare
+        description: Caller workflow file to dispatch after a successful prepare
         required: false
         type: string
         default: "release.yml"
+      staged_prepare:
+        description: Stage and validate the exact generated commit before promotion
+        required: false
+        type: boolean
+        default: false
+      validation_workflow:
+        description: Caller workflow file used to validate a staged release commit
+        required: false
+        type: string
+        default: "ci.yml"
+      required_checks:
+        description: JSON array of required job names from the validation run
+        required: false
+        type: string
+        default: "[]"
+      release_changed_files:
+        description: JSON array of non-executable files that GitOps may change
+        required: false
+        type: string
+        default: '["CHANGELOG.md","mix.exs"]'
+      generated_release_command:
+        description: Exact trusted caller command for generated release validation
+        required: false
+        type: string
+        default: ".github/scripts/validate-generated-release.sh"
+      staging_branch_prefix:
+        description: Prefix for deterministic checked-release branches
+        required: false
+        type: string
+        default: "release/gitops/"
+      validation_timeout_seconds:
+        description: Maximum time to wait for the exact validation run
+        required: false
+        type: number
+        default: 2700
 
 jobs:
   release:
     name: Release
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: ${{ inputs.staged_prepare && 90 || 25 }}
     concurrency:
-      group: release-${{ github.repository }}-${{ github.ref }}-${{ inputs.operation }}
+      group: ${{ inputs.staged_prepare && format('release-{0}-{1}', github.repository, inputs.tag_name != '' && inputs.tag_name || github.ref_name) || format('release-{0}-{1}-{2}', github.repository, github.ref, inputs.operation) }}
       cancel-in-progress: false
     permissions:
       actions: write
@@ -100,6 +135,8 @@ jobs:
         env:
           OPERATION_INPUT: ${{ inputs.operation }}
           TAG_NAME_INPUT: ${{ inputs.tag_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          STAGED_PREPARE: ${{ inputs.staged_prepare }}
         run: |
           set -euo pipefail
 
@@ -132,33 +169,123 @@ jobs:
             fi
             echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
             echo "bare_version=${tag_name#v}" >> "$GITHUB_OUTPUT"
-            echo "target_branch=" >> "$GITHUB_OUTPUT"
+            if [ "$STAGED_PREPARE" = "true" ]; then
+              echo "target_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+            else
+              echo "target_branch=" >> "$GITHUB_OUTPUT"
+            fi
           else
             if [[ "$GITHUB_REF" != refs/heads/* ]]; then
               echo "::error::Prepare must run from a branch ref."
               exit 1
             fi
+            prepare_branch="${GITHUB_REF#refs/heads/}"
+            if [ "$STAGED_PREPARE" = "true" ] && [ "$prepare_branch" != "$DEFAULT_BRANCH" ]; then
+              echo "::error::Release prepare must run from the repository default branch."
+              exit 1
+            fi
             echo "tag_name=" >> "$GITHUB_OUTPUT"
             echo "bare_version=" >> "$GITHUB_OUTPUT"
-            echo "target_branch=${GITHUB_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+            echo "target_branch=$prepare_branch" >> "$GITHUB_OUTPUT"
           fi
 
           echo "operation=$operation" >> "$GITHUB_OUTPUT"
+          echo "default_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Validate release notes mode
         shell: bash
+        env:
+          RELEASE_NOTES_MODE: ${{ inputs.release_notes_mode }}
         run: |
           set -euo pipefail
-          case "${{ inputs.release_notes_mode }}" in
+          case "$RELEASE_NOTES_MODE" in
             changelog|generated) ;;
             *)
-              echo "::error::Unsupported release_notes_mode: ${{ inputs.release_notes_mode }}"
+              echo "::error::Unsupported release_notes_mode: $RELEASE_NOTES_MODE"
               exit 1
               ;;
           esac
 
+      - name: Validate trusted release ref before checkout
+        if: ${{ inputs.staged_prepare == true }}
+        id: trusted-ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_OPERATION: ${{ steps.mode.outputs.operation }}
+          RELEASE_TAG: ${{ steps.mode.outputs.tag_name }}
+          DEFAULT_BRANCH: ${{ steps.mode.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            echo "::error::Repository metadata returned no default branch."
+            exit 1
+          fi
+
+          current_default_branch="$(
+            gh api --method GET "repos/$GITHUB_REPOSITORY" --jq '.default_branch'
+          )"
+          if [ "$current_default_branch" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::Dispatch metadata does not match the current repository default branch."
+            exit 1
+          fi
+
+          default_ref="$(gh api --method GET "repos/$GITHUB_REPOSITORY/git/ref/heads/$DEFAULT_BRANCH")"
+          default_sha="$(jq -er '.object.sha' <<< "$default_ref")"
+          if [[ ! "$default_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Repository metadata returned an invalid default-branch SHA."
+            exit 1
+          fi
+          echo "default_sha=$default_sha" >> "$GITHUB_OUTPUT"
+
+          if [ "$RELEASE_OPERATION" = "prepare" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ] || [ "$GITHUB_SHA" != "$default_sha" ]; then
+              echo "::error::Prepare ref is not the current repository default branch."
+              exit 1
+            fi
+            exit 0
+          fi
+
+          if [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+            if [ "$GITHUB_SHA" != "$default_sha" ]; then
+              echo "::error::Publish source is a stale default-branch revision."
+              exit 1
+            fi
+          elif [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
+            echo "::error::Publish source must be the current default branch or the exact release tag."
+            exit 1
+          fi
+
+          tag_ref="$(gh api --method GET "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          tag_object_sha="$(jq -er 'select(.object.type == "tag") | .object.sha' <<< "$tag_ref")"
+          tag_object="$(gh api --method GET "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          tag_name="$(jq -er '.tag' <<< "$tag_object")"
+          release_sha="$(jq -er 'select(.object.type == "commit") | .object.sha' <<< "$tag_object")"
+          if [ "$tag_name" != "$RELEASE_TAG" ] || [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Publish requires the exact existing annotated release tag."
+            exit 1
+          fi
+          if [ "$GITHUB_REF" = "refs/tags/$RELEASE_TAG" ] && [ "$GITHUB_SHA" != "$release_sha" ]; then
+            echo "::error::Publish tag ref does not peel to github.sha."
+            exit 1
+          fi
+
+          compare_status="$(
+            gh api --method GET "repos/$GITHUB_REPOSITORY/compare/${release_sha}...${default_sha}" \
+              --jq '.status'
+          )"
+          case "$compare_status" in
+            ahead|identical) ;;
+            *)
+              echo "::error::The release tag commit is not reachable from the current default branch."
+              exit 1
+              ;;
+          esac
+          echo "tag_object_sha=$tag_object_sha" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+
       - name: Require Hex token for publish
-        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true }}
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare != true && inputs.dry_run != true && inputs.hex_dry_run != true }}
         shell: bash
         env:
           HAS_HEX_API_KEY: ${{ secrets.HEX_API_KEY != '' }}
@@ -184,6 +311,26 @@ jobs:
           set -euo pipefail
           git fetch --tags --force origin
           git checkout --detach "refs/tags/$TAG_NAME"
+
+      - name: Verify trusted release checkout
+        if: ${{ inputs.staged_prepare == true }}
+        shell: bash
+        env:
+          RELEASE_OPERATION: ${{ steps.mode.outputs.operation }}
+          RELEASE_TAG: ${{ steps.mode.outputs.tag_name }}
+          EXPECTED_DEFAULT_SHA: ${{ steps.trusted-ref.outputs.default_sha }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ steps.trusted-ref.outputs.tag_object_sha }}
+          EXPECTED_RELEASE_SHA: ${{ steps.trusted-ref.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_OPERATION" = "prepare" ]; then
+            test "$(git rev-parse HEAD)" = "$EXPECTED_DEFAULT_SHA"
+            exit 0
+          fi
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG")" = "$EXPECTED_TAG_OBJECT_SHA"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$EXPECTED_RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_SHA"
 
       - name: Resolve workflow platform ref
         id: platform-ref
@@ -218,6 +365,12 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Record exact release parent
+        if: ${{ steps.mode.outputs.operation == 'prepare' }}
+        id: release-parent
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Beam
         uses: ./.github-actions-platform/.github/actions/setup-beam
@@ -282,16 +435,37 @@ jobs:
         shell: bash
         env:
           MIX_ENV: ${{ inputs.mix_env }}
+          PREFLIGHT_COMMAND: ${{ inputs.preflight_command }}
         run: |
           set -euo pipefail
-          bash -lc "${{ inputs.preflight_command }}"
+          bash -lc "$PREFLIGHT_COMMAND"
 
-      - name: Prepare release with git_ops
-        id: prepare
-        if: ${{ steps.mode.outputs.operation == 'prepare' }}
+      - name: Refuse repeated checked release before planning
+        if: ${{ steps.mode.outputs.operation == 'prepare' && inputs.staged_prepare == true && inputs.dry_run != true }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
+          DEFAULT_BRANCH: ${{ steps.mode.outputs.default_branch }}
+          STAGING_BRANCH_PREFIX: ${{ inputs.staging_branch_prefix }}
+          RELEASE_PARENT: ${{ steps.release-parent.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py precheck-parent \
+            --repository "$RELEASE_REPOSITORY" \
+            --target-branch "$TARGET_BRANCH" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --staging-prefix "$STAGING_BRANCH_PREFIX" \
+            --parent "$RELEASE_PARENT"
+
+      - name: Plan checked release before generation
+        if: ${{ steps.mode.outputs.operation == 'prepare' && inputs.staged_prepare == true }}
+        id: checked-plan
         shell: bash
         env:
           MIX_ENV: ${{ inputs.mix_env }}
+          RELEASE_COMMAND: ${{ inputs.release_command }}
           VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: |
           set -euo pipefail
@@ -301,7 +475,95 @@ jobs:
             if [ "$#" -gt 0 ]; then
               printf -v escaped_args '%q ' "$@"
             fi
-            bash -lc "${{ inputs.release_command }} ${escaped_args}"
+            bash -lc "$RELEASE_COMMAND $escaped_args"
+          }
+
+          project_version="$({
+            mix eval 'Mix.Project.get!().project()[:version] |> IO.puts()'
+          } | tail -n 1 | tr -d '[:space:]')"
+
+          if ! git tag --list 'v[0-9]*' | grep -q .; then
+            planned_version="${VERSION_OVERRIDE:-$project_version}"
+            if [ "$planned_version" != "$project_version" ]; then
+              echo "::error::Initial release version_override must match the version already in mix.exs."
+              exit 1
+            fi
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            echo "tag=v${planned_version#v}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          dry_run_log="$(mktemp)"
+          trap 'rm -f "$dry_run_log"' EXIT
+          dry_run_status=0
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            run_release --override "$VERSION_OVERRIDE" --dry-run >"$dry_run_log" 2>&1 || dry_run_status=$?
+          else
+            run_release --dry-run >"$dry_run_log" 2>&1 || dry_run_status=$?
+          fi
+          cat "$dry_run_log"
+
+          if [ -z "$VERSION_OVERRIDE" ] && grep -qE '(No changes since|No changes should result)' "$dry_run_log"; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$dry_run_status" -ne 0 ]; then
+            exit "$dry_run_status"
+          fi
+
+          mapfile -t planned_versions < <(
+            sed -nE 's/^.*Your new version is: (v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?).*$/\1/p' "$dry_run_log"
+          )
+          if [ "${#planned_versions[@]}" -ne 1 ]; then
+            echo "::error::Unable to resolve one release version from the GitOps dry run."
+            exit 1
+          fi
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+          echo "tag=v${planned_versions[0]#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse repeated checked release before generation
+        if: ${{ steps.mode.outputs.operation == 'prepare' && inputs.staged_prepare == true && inputs.dry_run != true && steps.checked-plan.outputs.skipped != 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
+          DEFAULT_BRANCH: ${{ steps.mode.outputs.default_branch }}
+          STAGING_BRANCH_PREFIX: ${{ inputs.staging_branch_prefix }}
+          RELEASE_TAG: ${{ steps.checked-plan.outputs.tag }}
+          RELEASE_PARENT: ${{ steps.release-parent.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py precheck \
+            --repository "$RELEASE_REPOSITORY" \
+            --target-branch "$TARGET_BRANCH" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --staging-prefix "$STAGING_BRANCH_PREFIX" \
+            --tag "$RELEASE_TAG" \
+            --parent "$RELEASE_PARENT"
+
+      - name: Prepare release with git_ops
+        id: prepare
+        if: ${{ steps.mode.outputs.operation == 'prepare' }}
+        shell: bash
+        env:
+          MIX_ENV: ${{ inputs.mix_env }}
+          RELEASE_COMMAND: ${{ inputs.release_command }}
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+          STAGED_PREPARE: ${{ inputs.staged_prepare }}
+          PLANNED_TAG: ${{ steps.checked-plan.outputs.tag }}
+          PLANNED_SKIPPED: ${{ steps.checked-plan.outputs.skipped }}
+          RELEASE_PARENT: ${{ steps.release-parent.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          run_release() {
+            local escaped_args=""
+            if [ "$#" -gt 0 ]; then
+              printf -v escaped_args '%q ' "$@"
+            fi
+            bash -lc "$RELEASE_COMMAND $escaped_args"
           }
 
           project_version() {
@@ -313,6 +575,48 @@ jobs:
           has_release_tag() {
             git tag --list 'v[0-9]*' | grep -q .
           }
+
+          if [ "$STAGED_PREPARE" = "true" ]; then
+            if [ "$PLANNED_SKIPPED" = "true" ]; then
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              echo "Dry run requested; skipping release commit, tag, Hex publish, and GitHub release."
+              exit 0
+            fi
+            if [[ ! "$PLANNED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "::error::Checked release plan returned an invalid tag."
+              exit 1
+            fi
+
+            if ! has_release_tag; then
+              current_version="$(project_version)"
+              if [ "$PLANNED_TAG" != "v${current_version#v}" ]; then
+                echo "::error::Initial checked release plan does not match mix.exs."
+                exit 1
+              fi
+              git commit --allow-empty -m "chore: release version $PLANNED_TAG"
+              git tag -a "$PLANNED_TAG" -m "$PLANNED_TAG"
+            elif [ -n "$VERSION_OVERRIDE" ]; then
+              run_release --override "$VERSION_OVERRIDE"
+            else
+              run_release
+            fi
+
+            if [ "$(git rev-list --parents -n 1 HEAD)" != "$(git rev-parse HEAD) $RELEASE_PARENT" ]; then
+              echo "::error::Checked release generation did not create exactly one commit from the recorded parent."
+              exit 1
+            fi
+            if [ "$(git cat-file -t "refs/tags/$PLANNED_TAG")" != tag ] || \
+               [ "$(git rev-parse "refs/tags/$PLANNED_TAG^{commit}")" != "$(git rev-parse HEAD)" ]; then
+              echo "::error::Checked release generation did not create the planned annotated tag at HEAD."
+              exit 1
+            fi
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if ! has_release_tag; then
             current_version="$(project_version)"
@@ -390,17 +694,17 @@ jobs:
         uses: ./.github-actions-platform/.github/actions/extract-version
 
       - name: Push prepared release commit and tag
-        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true }}
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true && inputs.staged_prepare != true }}
         shell: bash
         env:
           RELEASE_VERSION: ${{ steps.prepared-version.outputs.version }}
           TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
         run: |
           set -euo pipefail
-          git push --atomic origin "HEAD:refs/heads/${TARGET_BRANCH}" "refs/tags/${RELEASE_VERSION}"
+          git push --atomic --no-follow-tags origin "HEAD:refs/heads/${TARGET_BRANCH}" "refs/tags/${RELEASE_VERSION}"
 
       - name: Dispatch publish workflow
-        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true }}
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true && inputs.staged_prepare != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -416,6 +720,184 @@ jobs:
             -f tag_name="$RELEASE_VERSION" \
             -f dry_run=false \
             -f hex_dry_run=false
+
+      - name: Record checked-release state
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.prepare.outputs.skipped != 'true' && inputs.dry_run != true && inputs.staged_prepare == true }}
+        id: checked-state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
+          DEFAULT_BRANCH: ${{ steps.mode.outputs.default_branch }}
+          STAGING_BRANCH_PREFIX: ${{ inputs.staging_branch_prefix }}
+          RELEASE_TAG: ${{ steps.prepared-version.outputs.version }}
+          PLANNED_TAG: ${{ steps.checked-plan.outputs.tag }}
+          RELEASE_PARENT: ${{ steps.release-parent.outputs.sha }}
+          REQUIRED_CHECKS: ${{ inputs.required_checks }}
+          RELEASE_CHANGED_FILES: ${{ inputs.release_changed_files }}
+          GENERATED_RELEASE_COMMAND: ${{ inputs.generated_release_command }}
+          VALIDATION_WORKFLOW: ${{ inputs.validation_workflow }}
+          PUBLISH_WORKFLOW: ${{ inputs.publish_workflow }}
+          RELEASE_SOURCE_IDENTITY: ${{ github.run_id }}:${{ github.run_attempt }}:${{ github.job }}
+          RELEASE_STATE_DIR: ${{ runner.temp }}/checked-release-state
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_TAG" != "$PLANNED_TAG" ]; then
+            echo "::error::Generated release tag does not match the prechecked release tag."
+            exit 1
+          fi
+          python3 .github-actions-platform/.github/scripts/release_state.py prepare \
+            --repository "$RELEASE_REPOSITORY" \
+            --target-branch "$TARGET_BRANCH" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --staging-prefix "$STAGING_BRANCH_PREFIX" \
+            --tag "$RELEASE_TAG" \
+            --parent "$RELEASE_PARENT" \
+            --required-checks "$REQUIRED_CHECKS" \
+            --release-changed-files "$RELEASE_CHANGED_FILES" \
+            --generated-release-command "$GENERATED_RELEASE_COMMAND" \
+            --source-identity "$RELEASE_SOURCE_IDENTITY" \
+            --validation-workflow "$VALIDATION_WORKFLOW" \
+            --publish-workflow "$PUBLISH_WORKFLOW" \
+            --state-dir "$RELEASE_STATE_DIR"
+
+      - name: Preserve private checked-release state before staging
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.checked-state.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.checked-state.outputs.artifact_name }}
+          path: ${{ steps.checked-state.outputs.state_dir }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Push only the owned staging branch
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.checked-state.outcome == 'success' }}
+        shell: bash
+        env:
+          RELEASE_MANIFEST: ${{ steps.checked-state.outputs.manifest }}
+          REQUIRED_CHECKS_SHA256: ${{ steps.checked-state.outputs.required_checks_sha256 }}
+          RELEASE_POLICY_SHA256: ${{ steps.checked-state.outputs.release_policy_sha256 }}
+          STAGING_OWNER_TOKEN: ${{ steps.checked-state.outputs.staging_owner_token }}
+          RELEASE_SOURCE_IDENTITY: ${{ github.run_id }}:${{ github.run_attempt }}:${{ github.job }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py stage \
+            --manifest "$RELEASE_MANIFEST" \
+            --required-checks-sha256 "$REQUIRED_CHECKS_SHA256" \
+            --release-policy-sha256 "$RELEASE_POLICY_SHA256" \
+            --staging-owner-token "$STAGING_OWNER_TOKEN" \
+            --source-identity "$RELEASE_SOURCE_IDENTITY"
+
+      - name: Dispatch exact release validation
+        if: ${{ steps.mode.outputs.operation == 'prepare' && steps.checked-state.outcome == 'success' }}
+        id: validation-dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MANIFEST: ${{ steps.checked-state.outputs.manifest }}
+          REQUIRED_CHECKS_SHA256: ${{ steps.checked-state.outputs.required_checks_sha256 }}
+          RELEASE_POLICY_SHA256: ${{ steps.checked-state.outputs.release_policy_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py dispatch-validation \
+            --manifest "$RELEASE_MANIFEST" \
+            --required-checks-sha256 "$REQUIRED_CHECKS_SHA256" \
+            --release-policy-sha256 "$RELEASE_POLICY_SHA256"
+
+      - name: Preserve validation dispatch record
+        if: ${{ steps.validation-dispatch.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: checked-release-${{ steps.prepared-version.outputs.version }}-validation-${{ steps.validation-dispatch.outputs.validation_run_id }}
+          path: ${{ steps.checked-state.outputs.state_dir }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Require exact validation run and checks
+        if: ${{ steps.validation-dispatch.outcome == 'success' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MANIFEST: ${{ steps.checked-state.outputs.manifest }}
+          REQUIRED_CHECKS_SHA256: ${{ steps.checked-state.outputs.required_checks_sha256 }}
+          RELEASE_POLICY_SHA256: ${{ steps.checked-state.outputs.release_policy_sha256 }}
+          VALIDATION_TIMEOUT_SECONDS: ${{ inputs.validation_timeout_seconds }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py wait-validation \
+            --manifest "$RELEASE_MANIFEST" \
+            --required-checks-sha256 "$REQUIRED_CHECKS_SHA256" \
+            --release-policy-sha256 "$RELEASE_POLICY_SHA256" \
+            --timeout "$VALIDATION_TIMEOUT_SECONDS"
+
+      - name: Atomically promote the checked commit and annotated tag
+        if: ${{ steps.validation-dispatch.outcome == 'success' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MANIFEST: ${{ steps.checked-state.outputs.manifest }}
+          REQUIRED_CHECKS_SHA256: ${{ steps.checked-state.outputs.required_checks_sha256 }}
+          RELEASE_POLICY_SHA256: ${{ steps.checked-state.outputs.release_policy_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py promote \
+            --manifest "$RELEASE_MANIFEST" \
+            --required-checks-sha256 "$REQUIRED_CHECKS_SHA256" \
+            --release-policy-sha256 "$RELEASE_POLICY_SHA256"
+
+      - name: Dispatch publish once
+        if: ${{ steps.validation-dispatch.outcome == 'success' }}
+        id: publish-dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MANIFEST: ${{ steps.checked-state.outputs.manifest }}
+          REQUIRED_CHECKS_SHA256: ${{ steps.checked-state.outputs.required_checks_sha256 }}
+          RELEASE_POLICY_SHA256: ${{ steps.checked-state.outputs.release_policy_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py dispatch-publish \
+            --manifest "$RELEASE_MANIFEST" \
+            --required-checks-sha256 "$REQUIRED_CHECKS_SHA256" \
+            --release-policy-sha256 "$RELEASE_POLICY_SHA256"
+
+      - name: Preserve promotion and publish dispatch record
+        if: ${{ steps.publish-dispatch.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: checked-release-${{ steps.prepared-version.outputs.version }}-promoted-${{ steps.publish-dispatch.outputs.publish_run_id }}
+          path: ${{ steps.checked-state.outputs.state_dir }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Clean failed pre-promotion staging
+        if: ${{ failure() && steps.mode.outputs.operation == 'prepare' && inputs.staged_prepare == true }}
+        shell: bash
+        env:
+          RELEASE_MANIFEST: ${{ steps.checked-state.outputs.manifest }}
+          REQUIRED_CHECKS_SHA256: ${{ steps.checked-state.outputs.required_checks_sha256 }}
+          RELEASE_POLICY_SHA256: ${{ steps.checked-state.outputs.release_policy_sha256 }}
+          STAGING_OWNER_TOKEN: ${{ steps.checked-state.outputs.staging_owner_token }}
+          RELEASE_SOURCE_IDENTITY: ${{ github.run_id }}:${{ github.run_attempt }}:${{ github.job }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_MANIFEST" ] || [ ! -f "$RELEASE_MANIFEST" ]; then
+            exit 0
+          fi
+          if jq -e '.promoted == true' "$RELEASE_MANIFEST" >/dev/null; then
+            echo "::warning::Promotion completed. Use publish-only recovery; no prepare cleanup was attempted."
+            exit 0
+          fi
+          python3 .github-actions-platform/.github/scripts/release_state.py cleanup-before-promotion \
+            --manifest "$RELEASE_MANIFEST" \
+            --required-checks-sha256 "$REQUIRED_CHECKS_SHA256" \
+            --release-policy-sha256 "$RELEASE_POLICY_SHA256" \
+            --staging-owner-token "$STAGING_OWNER_TOKEN" \
+            --source-identity "$RELEASE_SOURCE_IDENTITY"
 
       - name: Validate publish tag matches package version
         if: ${{ steps.mode.outputs.operation == 'publish' }}
@@ -439,8 +921,23 @@ jobs:
           echo "version=$package_version" >> "$GITHUB_OUTPUT"
           echo "Validated $TAG_NAME matches package version $package_version."
 
+      - name: Recheck publish tag and reachability before package write
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare == true }}
+        id: publish-tag
+        shell: bash
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.mode.outputs.tag_name }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/release_state.py verify-publish-tag \
+            --repository "$RELEASE_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --target-branch "$TARGET_BRANCH"
+
       - name: Publish to Hex.pm
-        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true }}
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare != true && inputs.dry_run != true }}
         shell: bash
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
@@ -454,7 +951,7 @@ jobs:
           fi
 
       - name: Check Hex package version
-        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true }}
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare != true && inputs.dry_run != true && inputs.hex_dry_run != true }}
         id: hex-check
         shell: bash
         env:
@@ -472,7 +969,7 @@ jobs:
           fi
 
       - name: Extract changelog notes
-        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && inputs.release_notes_mode == 'changelog' && steps.hex-check.outputs.on-hex == 'true' }}
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare != true && inputs.dry_run != true && inputs.hex_dry_run != true && inputs.release_notes_mode == 'changelog' && steps.hex-check.outputs.on-hex == 'true' }}
         id: release-notes
         shell: bash
         env:
@@ -501,7 +998,7 @@ jobs:
           fi
 
       - name: Create or update GitHub release with changelog notes
-        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && inputs.release_notes_mode == 'changelog' && steps.release-notes.outputs.has-notes == 'true' }}
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare != true && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && inputs.release_notes_mode == 'changelog' && steps.release-notes.outputs.has-notes == 'true' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -519,7 +1016,7 @@ jobs:
           fi
 
       - name: Create GitHub release with generated notes
-        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && (inputs.release_notes_mode == 'generated' || steps.release-notes.outputs.has-notes != 'true') }}
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare != true && inputs.dry_run != true && inputs.hex_dry_run != true && steps.hex-check.outputs.on-hex == 'true' && (inputs.release_notes_mode == 'generated' || steps.release-notes.outputs.has-notes != 'true') }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -534,6 +1031,41 @@ jobs:
               --generate-notes
           fi
 
+      - name: Complete idempotent publish state
+        if: ${{ steps.mode.outputs.operation == 'publish' && inputs.staged_prepare == true }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          MIX_ENV: ${{ inputs.mix_env }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          PACKAGE_NAME: ${{ github.event.repository.name }}
+          PACKAGE_VERSION: ${{ steps.package-version.outputs.version }}
+          RELEASE_TAG: ${{ steps.mode.outputs.tag_name }}
+          RELEASE_NOTES_MODE: ${{ inputs.release_notes_mode }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          HEX_DRY_RUN: ${{ inputs.hex_dry_run }}
+          HAS_HEX_API_KEY: ${{ secrets.HEX_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          publish_args=(
+            --repository "$RELEASE_REPOSITORY"
+            --package "$PACKAGE_NAME"
+            --version "$PACKAGE_VERSION"
+            --tag "$RELEASE_TAG"
+            --notes-mode "$RELEASE_NOTES_MODE"
+          )
+          if [ "$DRY_RUN" = "true" ]; then
+            publish_args+=(--dry-run)
+          fi
+          if [ "$HEX_DRY_RUN" = "true" ]; then
+            publish_args+=(--hex-dry-run)
+          fi
+          if [ "$HAS_HEX_API_KEY" = "true" ]; then
+            publish_args+=(--has-hex-api-key)
+          fi
+          python3 .github-actions-platform/.github/scripts/publish_release.py "${publish_args[@]}"
+
       - name: Release summary
         if: always()
         shell: bash
@@ -543,6 +1075,7 @@ jobs:
             echo "- Operation: ${{ steps.mode.outputs.operation || 'unknown' }}"
             echo "- Dry run: ${{ inputs.dry_run }}"
             echo "- Hex dry run: ${{ inputs.hex_dry_run }}"
+            echo "- Checked staging: ${{ inputs.staged_prepare }}"
             echo "- Prepare skipped: ${{ steps.prepare.outputs.skipped || 'false' }}"
             if [ -n "${{ steps.mode.outputs.target_branch }}" ]; then
               echo "- Target branch: ${{ steps.mode.outputs.target_branch }}"
@@ -555,5 +1088,11 @@ jobs:
             fi
             if [ -n "${{ steps.package-version.outputs.version }}" ]; then
               echo "- Package version: ${{ steps.package-version.outputs.version }}"
+            fi
+            if [ -n "${{ steps.validation-dispatch.outputs.validation_run_id }}" ]; then
+              echo "- Validation run: ${{ steps.validation-dispatch.outputs.validation_run_id }}"
+            fi
+            if [ -n "${{ steps.publish-dispatch.outputs.publish_run_id }}" ]; then
+              echo "- Publish run: ${{ steps.publish-dispatch.outputs.publish_run_id }}"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

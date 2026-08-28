@@ -121,6 +121,16 @@ on:
         required: false
         type: string
         default: "mix docs"
+      release_validation:
+        description: Trusted checked-release metadata from workflow_dispatch
+        required: false
+        type: string
+        default: ""
+      generated_release_command:
+        description: Trusted caller command that validates exact generated release output
+        required: false
+        type: string
+        default: ""
 
 jobs:
   resolve-platform:
@@ -151,9 +161,52 @@ jobs:
           echo "ref=$workflow_sha" >> "$GITHUB_OUTPUT"
           echo "path=.github-actions-platform" >> "$GITHUB_OUTPUT"
 
+  release-validation:
+    name: Release Validation
+    needs: resolve-platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Confirm ordinary CI mode
+        if: ${{ inputs.release_validation == '' }}
+        shell: bash
+        run: echo "Checked-release validation was not requested."
+
+      - name: Checkout exact generated release commit
+        if: ${{ inputs.release_validation != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Checkout workflow platform
+        if: ${{ inputs.release_validation != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.resolve-platform.outputs.repository }}
+          ref: ${{ needs.resolve-platform.outputs.ref }}
+          path: ${{ needs.resolve-platform.outputs.path }}
+
+      - name: Validate trusted generated release
+        if: ${{ inputs.release_validation != '' }}
+        shell: bash
+        env:
+          RELEASE_VALIDATION: ${{ inputs.release_validation }}
+          GENERATED_RELEASE_COMMAND: ${{ inputs.generated_release_command }}
+        run: |
+          set -euo pipefail
+          python3 .github-actions-platform/.github/scripts/validate_generated_release.py \
+            --metadata "$RELEASE_VALIDATION" \
+            --command "$GENERATED_RELEASE_COMMAND"
+
   compile:
     name: Compile
-    needs: resolve-platform
+    needs:
+      - resolve-platform
+      - release-validation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -161,6 +214,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
 
       - name: Checkout workflow platform
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,7 +257,9 @@ jobs:
 
   prepare-quality-cache:
     name: Prepare Quality Cache
-    needs: resolve-platform
+    needs:
+      - resolve-platform
+      - release-validation
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -210,6 +267,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
 
       - name: Checkout workflow platform
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -255,13 +314,14 @@ jobs:
     name: Quality
     needs:
       - resolve-platform
+      - release-validation
       - compile
       - prepare-quality-cache
     uses: ./.github/workflows/elixir-quality.yml
     permissions:
       contents: read
     secrets:
-      HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+      HEX_API_KEY: ${{ inputs.release_validation == '' && secrets.HEX_API_KEY || '' }}
     with:
       otp_version: ${{ inputs.quality_otp_version }}
       elixir_version: ${{ inputs.quality_elixir_version }}
@@ -277,6 +337,8 @@ jobs:
       validate_hex_package: ${{ inputs.validate_hex_package }}
       docs: ${{ inputs.docs }}
       docs_command: ${{ inputs.docs_command }}
+      release_validation: ${{ inputs.release_validation }}
+      generated_release_command: ${{ inputs.generated_release_command }}
       workflow_platform_repository: ${{ needs.resolve-platform.outputs.repository }}
       workflow_platform_ref: ${{ needs.resolve-platform.outputs.ref }}
       workflow_platform_path: ${{ needs.resolve-platform.outputs.path }}
@@ -285,6 +347,7 @@ jobs:
     name: Test
     needs:
       - resolve-platform
+      - release-validation
       - compile
     uses: ./.github/workflows/elixir-test.yml
     permissions:
@@ -308,6 +371,7 @@ jobs:
     if: always()
     needs:
       - compile
+      - release-validation
       - prepare-quality-cache
       - quality
       - test
@@ -323,6 +387,7 @@ jobs:
           {
             echo "## Jido CI Summary"
             echo "- Compile: ${{ needs.compile.result }}"
+            echo "- Release validation: ${{ needs.release-validation.result }}"
             echo "- Prepare quality cache: ${{ needs.prepare-quality-cache.result }}"
             echo "- Quality: ${{ needs.quality.result }}"
             echo "- Test: ${{ needs.test.result }}"
