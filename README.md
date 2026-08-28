@@ -92,8 +92,8 @@ Checked staging uses this fixed state flow:
 5. Dispatch the configured validation workflow and record its returned run ID and first attempt.
 6. Require the complete run and each configured job from that exact run attempt to report literal `success` on the generated commit.
 7. Recheck the default branch, target parent, staging branch, tag absence, run, jobs, and fixed policy.
-8. In one atomic push, fast-forward the default branch, push the existing annotated tag, and delete the staging branch. Exact leases protect all three refs.
-9. Verify the remote tag object and peeled commit, then dispatch publish once.
+8. In one atomic push, fast-forward the default branch, push the existing annotated tag, and move the validated staging branch back to the recorded parent. Exact leases protect all three refs. A narrow retry handles only GitHub's temporary required-check propagation response and repeats all state and validation checks.
+9. Verify the remote tag object and peeled commit, record successful promotion, and delete the staging branch with a separate exact lease. A changed or uncertain branch is never deleted. Then dispatch publish once.
 
 The validation caller must use `workflow_dispatch`, accept only the
 `release_validation` metadata input, and pass a fixed
@@ -119,8 +119,10 @@ confirmed this run created and that is still at the recorded commit. Push
 intent alone does not grant cleanup rights. An up-to-date response or a lost
 response leaves the branch in place and blocks another prepare because its
 owner cannot be proved. A pre-existing branch is never cleanup-owned.
-Successful promotion deletes the staging branch inside the same atomic
-transaction. After promotion, do not run prepare again. Use publish-only
+Successful promotion consumes the validated staging tip inside the atomic
+transaction, then deletes the branch with a separate exact lease. A failed or
+uncertain post-promotion cleanup leaves the branch for manual inspection but
+does not stop publish. After promotion, do not run prepare again. Use publish-only
 recovery for the existing tag. Publish recovery first checks the remote annotated tag,
 target-branch reachability, package version, Hex state, and GitHub release
 state. It skips an existing Hex version and creates a missing GitHub release.

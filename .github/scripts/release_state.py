@@ -20,6 +20,8 @@ from typing import Any
 
 
 API_VERSION = "2026-03-10"
+PROMOTION_ATTEMPTS = 4
+PROMOTION_RETRY_SECONDS = 15
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -37,6 +39,10 @@ class ReleaseError(RuntimeError):
 
 def fail(message: str) -> None:
     raise ReleaseError(message)
+
+
+def warn(message: str) -> None:
+    print(f"::warning::{message}", file=sys.stderr)
 
 
 def run(
@@ -1087,59 +1093,103 @@ def cmd_promote(args: argparse.Namespace) -> None:
         fail("Promotion is not allowed in the current release state.")
     assert_local_release(manifest)
     github = GitHub(manifest["repository"])
-    if github.default_branch() != manifest["default_branch"]:
-        fail("The repository default branch changed after release preparation.")
-
     remote = manifest["remote"]
     target_ref = f"refs/heads/{manifest['target_branch']}"
     branch_ref = f"refs/heads/{manifest['staging_branch']}"
     tag_ref = f"refs/tags/{manifest['tag']}"
-    if remote_ref(remote, target_ref) != manifest["parent_sha"]:
-        fail("The target branch moved after release preparation.")
-    if remote_ref(remote, branch_ref) != manifest["release_sha"]:
-        fail("The staging branch changed after validation.")
-    tag_object, tag_peeled = remote_tag(remote, manifest["tag"])
-    if tag_object is not None or tag_peeled is not None:
-        fail("The release tag appeared before promotion.")
 
-    workflow_run = github.run(manifest["validation_run_id"])
-    validate_run(manifest, workflow_run)
-    validate_required_jobs(manifest, github, workflow_run)
+    for attempt in range(1, PROMOTION_ATTEMPTS + 1):
+        if github.default_branch() != manifest["default_branch"]:
+            fail("The repository default branch changed after release preparation.")
+        if remote_ref(remote, target_ref) != manifest["parent_sha"]:
+            fail("The target branch moved after release preparation.")
+        if remote_ref(remote, branch_ref) != manifest["release_sha"]:
+            fail("The staging branch changed after validation.")
+        tag_object, tag_peeled = remote_tag(remote, manifest["tag"])
+        if tag_object is not None or tag_peeled is not None:
+            fail("The release tag appeared before promotion.")
 
-    push = run(
-        [
-            "git",
-            "push",
-            "--atomic",
-            "--no-follow-tags",
-            f"--force-with-lease={target_ref}:{manifest['parent_sha']}",
-            f"--force-with-lease={branch_ref}:{manifest['release_sha']}",
-            f"--force-with-lease={tag_ref}:",
-            remote,
-            f"{manifest['release_sha']}:{target_ref}",
-            f"{tag_ref}:{tag_ref}",
-            f":{branch_ref}",
-        ],
-        check=False,
-    )
-    if push.returncode != 0:
+        workflow_run = github.run(manifest["validation_run_id"])
+        validate_run(manifest, workflow_run)
+        validate_required_jobs(manifest, github, workflow_run)
+
+        push = run(
+            [
+                "git",
+                "push",
+                "--atomic",
+                "--no-follow-tags",
+                f"--force-with-lease={target_ref}:{manifest['parent_sha']}",
+                f"--force-with-lease={branch_ref}:{manifest['release_sha']}",
+                f"--force-with-lease={tag_ref}:",
+                remote,
+                f"{manifest['release_sha']}:{target_ref}",
+                f"{tag_ref}:{tag_ref}",
+                f"{manifest['parent_sha']}:{branch_ref}",
+            ],
+            check=False,
+        )
+        if push.returncode == 0:
+            break
+
         current_target = remote_ref(remote, target_ref)
+        current_branch = remote_ref(remote, branch_ref)
         current_tag, current_peeled = remote_tag(remote, manifest["tag"])
-        if current_target != manifest["parent_sha"] or current_tag is not None or current_peeled is not None:
+        if (
+            current_target != manifest["parent_sha"]
+            or current_branch != manifest["release_sha"]
+            or current_tag is not None
+            or current_peeled is not None
+        ):
             fail("Atomic promotion failed and remote refs are inconsistent; stop immediately.")
         detail = push.stderr.strip() or push.stdout.strip()
-        fail(f"Atomic promotion was rejected; main and tag are unchanged: {detail}")
+        expected_check = (
+            f"GH006: Protected branch update failed for {target_ref}." in detail
+            and re.search(
+                r'Required status check "[^"\r\n]{1,200}" is expected\.', detail
+            )
+        )
+        if expected_check and attempt < PROMOTION_ATTEMPTS:
+            warn(
+                "GitHub has not applied a successful required check to the protected "
+                f"branch yet. Promotion attempt {attempt} of {PROMOTION_ATTEMPTS} was "
+                f"safe and unchanged; retrying in {PROMOTION_RETRY_SECONDS} seconds."
+            )
+            time.sleep(PROMOTION_RETRY_SECONDS)
+            continue
+        fail(f"Atomic promotion was rejected; main, tag, and staging are unchanged: {detail}")
 
     if remote_ref(remote, target_ref) != manifest["release_sha"]:
         fail("Promotion did not move the target branch to the release commit.")
-    if remote_ref(remote, branch_ref) is not None:
-        fail("Promotion did not atomically remove the owned staging branch.")
+    if remote_ref(remote, branch_ref) != manifest["parent_sha"]:
+        fail("Promotion did not atomically consume the validated staging branch.")
     tag_object, tag_peeled = remote_tag(remote, manifest["tag"])
     if tag_object != manifest["tag_object_sha"] or tag_peeled != manifest["release_sha"]:
         fail("Remote annotated tag verification failed after promotion.")
     manifest["phase"] = "promoted"
     manifest["promoted"] = True
     write_manifest(manifest_path, manifest)
+
+    cleanup = run(
+        [
+            "git",
+            "push",
+            "--porcelain",
+            "--no-follow-tags",
+            f"--force-with-lease={branch_ref}:{manifest['parent_sha']}",
+            remote,
+            f":{branch_ref}",
+        ],
+        check=False,
+    )
+    remaining_branch = remote_ref(remote, branch_ref)
+    if cleanup.returncode != 0 or remaining_branch is not None:
+        detail = cleanup.stderr.strip() or cleanup.stdout.strip()
+        warn(
+            "Promotion succeeded, but the exact-leased staging cleanup was not "
+            f"confirmed. Do not delete {branch_ref} without checking its current SHA. "
+            f"Git response: {detail or 'no detail'}"
+        )
 
 
 def cmd_dispatch_publish(args: argparse.Namespace) -> None:

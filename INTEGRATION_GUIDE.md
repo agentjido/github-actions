@@ -376,9 +376,15 @@ before staging.
 After the full run and configured jobs succeed on `R`, the workflow rechecks
 the repository default branch, `P`, `B`, tag absence, the exact run attempt,
 the jobs, and the fixed policy. It atomically fast-forwards the default branch
-to `R`, pushes the existing local tag ref at `A`, and deletes `B`. Exact leases
-protect all three refs. It verifies `A` and its peeled `R`, dispatches publish
-once, and records `U`.
+to `R`, pushes the existing local tag ref at `A`, and moves `B` from `R` back
+to `P`. This real ref update keeps `B` in the receive-pack transaction while
+GitHub evaluates protection. Exact leases protect all three refs. A narrow,
+bounded retry handles only GitHub's temporary required-check propagation
+response and repeats every remote-state and validation check first. The
+workflow verifies `A` and its peeled `R`, records promotion, then deletes `B`
+with a separate exact lease. A changed or uncertain `B` is left for manual
+inspection and does not stop publish. The workflow then dispatches publish
+once and records `U`.
 
 The workflow does not read or snapshot branch protection. The caller-supplied
 `required_checks` JSON is the exact validation policy. If repository protection
@@ -393,7 +399,8 @@ rejects the transaction. This requires no Administration permission.
 | Failure after the server confirms this run created `B` | Main and tag stay unchanged | Automatic cleanup deletes only this run's owned `B` at `R`. It refuses a changed branch or invalid ownership record. |
 | Pre-existing `B`, including `B = R` | Main and tag stay unchanged | Stop. An up-to-date push result does not grant ownership and does not delete the branch. |
 | Lost staging-push response or runner loss | `B` can remain; the private state artifact remains | Do not regenerate the commit. Ownership is uncertain, so automatic cleanup is refused. The branch and artifact block another prepare. |
-| Atomic promotion rejection | Main, tag, and `B` all stay unchanged | Fix the external cause, then use owned pre-promotion cleanup only when the run recorded server-confirmed branch creation. |
+| Atomic promotion rejection | Main, tag, and `B` all stay unchanged | Temporary required-check propagation is retried only after all state and validation checks pass again. For any final rejection, fix the external cause, then use owned pre-promotion cleanup only when the run recorded server-confirmed branch creation. |
+| Post-promotion staging cleanup is rejected or uncertain | Main and the annotated tag are final; `B` can remain at `P` or a changed SHA | Publish continues. Inspect `B` and delete it manually only when its current SHA and ownership are known. |
 | Failure after promotion | Main and annotated tag are final | Do not run prepare. Run publish-only recovery for the existing tag. |
 | Dispatch response without a run ID | The dispatch result is uncertain | Do not dispatch again automatically. Inspect Actions and use the recorded state. |
 

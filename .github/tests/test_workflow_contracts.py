@@ -159,8 +159,11 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("--force-with-lease={target_ref}", STATE)
         self.assertIn("--force-with-lease={branch_ref}", STATE)
         self.assertIn("--force-with-lease={tag_ref}:", STATE)
+        self.assertIn('f"{manifest[\'parent_sha\']}:{branch_ref}"', STATE)
         self.assertIn('f":{branch_ref}"', STATE)
-        self.assertIn("Promotion did not atomically remove", STATE)
+        self.assertIn("Promotion did not atomically consume", STATE)
+        self.assertIn("Promotion succeeded, but the exact-leased staging cleanup", STATE)
+        self.assertIn("PROMOTION_ATTEMPTS", STATE)
         self.assertIn('"--no-follow-tags"', STATE)
         self.assertIn("Refusing to delete a staging branch", STATE)
 

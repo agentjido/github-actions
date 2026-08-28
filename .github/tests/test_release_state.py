@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -350,8 +351,11 @@ class ReleaseStateTest(unittest.TestCase):
         command("git", "commit", "-m", "chore: move main", cwd=clone)
         command("git", "push", "origin", "main", cwd=clone)
         moved_main = command("git", "rev-parse", "HEAD", cwd=clone)
-        with self.assertRaises(release_state.ReleaseError):
+        with mock.patch.object(release_state.time, "sleep") as sleep, self.assertRaises(
+            release_state.ReleaseError
+        ):
             release_state.cmd_promote(self.state_args())
+        sleep.assert_not_called()
         self.assertEqual(self.remote_ref("refs/heads/main"), moved_main)
         self.assertIsNone(self.remote_ref("refs/tags/v1.1.0"))
         release_state.cmd_cleanup_before_promotion(self.state_args(owner=True))
@@ -391,13 +395,97 @@ class ReleaseStateTest(unittest.TestCase):
             encoding="utf-8",
         )
         hook.chmod(0o755)
-        with self.assertRaises(release_state.ReleaseError):
+        with mock.patch.object(release_state.time, "sleep") as sleep, self.assertRaises(
+            release_state.ReleaseError
+        ):
             release_state.cmd_promote(self.state_args())
+        sleep.assert_not_called()
         self.assertEqual(self.remote_ref("refs/heads/main"), self.fixture.parent)
         self.assertIsNone(self.remote_ref("refs/tags/v1.1.0"))
         self.assertEqual(
             self.remote_ref("refs/heads/release/gitops/1.1.0"), self.fixture.release
         )
+
+    def test_expected_required_check_rejection_is_revalidated_and_retried(self) -> None:
+        self.prepare()
+        self.stage()
+        self.dispatch_and_validate()
+        marker = self.fixture.root / "reject-promotion-once"
+        hook = self.fixture.remote / "hooks/pre-receive"
+        hook.write_text(
+            "#!/bin/sh\n"
+            f"if test ! -e {marker.as_posix()}; then\n"
+            f"  touch {marker.as_posix()}\n"
+            "  echo 'GH006: Protected branch update failed for refs/heads/main.' >&2\n"
+            "  echo 'Required status check \"CI\" is expected.' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        hook.chmod(0o755)
+
+        with mock.patch.object(release_state.time, "sleep") as sleep:
+            release_state.cmd_promote(self.state_args())
+
+        sleep.assert_called_once_with(release_state.PROMOTION_RETRY_SECONDS)
+        self.assertEqual(self.github.job_reads, 3)
+        self.assertEqual(self.remote_ref("refs/heads/main"), self.fixture.release)
+        self.assertEqual(self.remote_ref("refs/tags/v1.1.0"), self.fixture.tag_object)
+        self.assertIsNone(self.remote_ref("refs/heads/release/gitops/1.1.0"))
+
+    def test_changed_staging_branch_is_not_deleted_after_promotion(self) -> None:
+        self.prepare()
+        self.stage()
+        self.dispatch_and_validate()
+        (self.fixture.work / "cleanup-race.txt").write_text(
+            "changed after promotion\n", encoding="utf-8"
+        )
+        command("git", "add", "cleanup-race.txt", cwd=self.fixture.work)
+        command("git", "commit", "-m", "chore: race cleanup", cwd=self.fixture.work)
+        changed = command("git", "rev-parse", "HEAD", cwd=self.fixture.work)
+        command(
+            "git",
+            "push",
+            "--no-follow-tags",
+            "origin",
+            f"{changed}:refs/heads/cleanup-race-candidate",
+            cwd=self.fixture.work,
+        )
+        command("git", "checkout", "--detach", self.fixture.release, cwd=self.fixture.work)
+
+        real_run = release_state.run
+        branch_ref = "refs/heads/release/gitops/1.1.0"
+
+        def race_cleanup(arguments: list[str], **kwargs: object):
+            if (
+                arguments[:2] == ["git", "push"]
+                and "--atomic" not in arguments
+                and f":{branch_ref}" in arguments
+            ):
+                command(
+                    "git",
+                    "--git-dir",
+                    self.fixture.remote.as_posix(),
+                    "update-ref",
+                    branch_ref,
+                    changed,
+                    self.fixture.parent,
+                )
+            return real_run(arguments, **kwargs)
+
+        stderr = io.StringIO()
+        with mock.patch.object(release_state, "run", side_effect=race_cleanup), mock.patch(
+            "sys.stderr", stderr
+        ):
+            release_state.cmd_promote(self.state_args())
+
+        manifest = release_state.read_manifest(self.manifest)
+        self.assertTrue(manifest["promoted"])
+        self.assertEqual(self.remote_ref("refs/heads/main"), self.fixture.release)
+        self.assertEqual(self.remote_ref("refs/tags/v1.1.0"), self.fixture.tag_object)
+        self.assertEqual(self.remote_ref(branch_ref), changed)
+        self.assertIn("exact-leased staging cleanup was not confirmed", stderr.getvalue())
 
     def test_repeated_prepare_refuses_existing_branch_or_artifact(self) -> None:
         self.prepare()
@@ -805,6 +893,8 @@ raise SystemExit(child.wait())
             self.remote_ref("refs/heads/release/gitops/1.1.0"), changed
         )
         self.assertIn("refs/heads/release/gitops/1.1.0", trace.read_text())
+        self.assertIn(self.fixture.release, trace.read_text())
+        self.assertIn(self.fixture.parent, trace.read_text())
         with self.assertRaises(release_state.ReleaseError):
             release_state.cmd_cleanup_before_promotion(self.state_args(owner=True))
         self.assertEqual(
