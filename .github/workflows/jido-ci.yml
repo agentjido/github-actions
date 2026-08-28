@@ -167,7 +167,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      actions: read
       contents: read
     steps:
       - name: Confirm ordinary CI mode
