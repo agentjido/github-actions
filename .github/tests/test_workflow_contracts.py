@@ -52,6 +52,17 @@ def step_block(workflow: str, name: str) -> str:
     return match.group(0)
 
 
+def job_block(workflow: str, name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(name)}:\n(?P<body>(?:    .*\n|\n)+?)(?=^  [A-Za-z0-9_-]+:|\Z)",
+        workflow,
+        re.MULTILINE,
+    )
+    if not match:
+        raise AssertionError(f"Missing workflow job: {name}")
+    return match.group(0)
+
+
 def run_body(block: str) -> str:
     marker = "        run: |\n"
     if marker not in block:
@@ -109,10 +120,9 @@ class WorkflowContractTest(unittest.TestCase):
     def test_validation_gate_uses_exact_sha_and_read_only_permissions(self) -> None:
         for workflow in (CI, QUALITY):
             self.assertIn("ref: ${{ github.sha }}", workflow)
-            self.assertRegex(
-                workflow,
-                r"release-validation:\n(?:.|\n)*?permissions:\n      actions: read\n      contents: read",
-            )
+            validation = job_block(workflow, "release-validation")
+            self.assertIn("    permissions:\n      contents: read", validation)
+            self.assertNotIn("actions:", validation)
             self.assertIn("validate_generated_release.py", workflow)
         self.assertIn("github-actions[bot]", VALIDATOR)
         self.assertIn('event_name != "workflow_dispatch"', VALIDATOR)
