@@ -117,6 +117,16 @@ class WorkflowContractTest(unittest.TestCase):
                     self.assertIn("type: string", block)
                     self.assertIn('default: ""', block)
 
+    def test_nested_ci_workflows_use_exact_remote_commits(self) -> None:
+        commit = "410854ddd3173779056b274040bb8a58ca5ffb97"
+        for workflow in ("elixir-quality.yml", "elixir-test.yml"):
+            with self.subTest(workflow=workflow):
+                self.assertIn(
+                    f"uses: agentjido/github-actions/.github/workflows/{workflow}@{commit}",
+                    CI,
+                )
+        self.assertNotIn("uses: ./.github/workflows/", CI)
+
     def test_validation_gate_uses_exact_sha_and_read_only_permissions(self) -> None:
         for workflow in (CI, QUALITY):
             self.assertIn("ref: ${{ github.sha }}", workflow)
