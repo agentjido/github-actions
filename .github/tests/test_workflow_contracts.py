@@ -120,7 +120,7 @@ class WorkflowContractTest(unittest.TestCase):
                     self.assertIn('default: ""', block)
 
     def test_nested_ci_workflows_use_exact_remote_commits(self) -> None:
-        commit = "e05dabcf9ad4c54a03663517222a7c944a5e48bf"
+        commit = "36644d87be4f88f5376dad595b3bb0303bda8145"
         for workflow in ("elixir-quality.yml", "elixir-test.yml"):
             with self.subTest(workflow=workflow):
                 self.assertIn(
