@@ -6,6 +6,11 @@ on:
       HEX_API_KEY:
         required: false
     inputs:
+      runner:
+        description: Runner label for all CI jobs
+        required: false
+        type: string
+        default: "ubuntu-24.04"
       quality_otp_version:
         description: OTP version for the quality lane
         required: false
@@ -135,7 +140,7 @@ on:
 jobs:
   resolve-platform:
     name: Resolve Platform
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     permissions:
       actions: read
       contents: read
@@ -164,7 +169,7 @@ jobs:
   release-validation:
     name: Release Validation
     needs: resolve-platform
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -206,7 +211,7 @@ jobs:
     needs:
       - resolve-platform
       - release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -259,7 +264,7 @@ jobs:
     needs:
       - resolve-platform
       - release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -316,12 +321,13 @@ jobs:
       - release-validation
       - compile
       - prepare-quality-cache
-    uses: agentjido/github-actions/.github/workflows/elixir-quality.yml@410854ddd3173779056b274040bb8a58ca5ffb97 # v5.2.1
+    uses: agentjido/github-actions/.github/workflows/elixir-quality.yml@e05dabcf9ad4c54a03663517222a7c944a5e48bf
     permissions:
       contents: read
     secrets:
       HEX_API_KEY: ${{ inputs.release_validation == '' && secrets.HEX_API_KEY || '' }}
     with:
+      runner: ${{ inputs.runner }}
       otp_version: ${{ inputs.quality_otp_version }}
       elixir_version: ${{ inputs.quality_elixir_version }}
       mix_env: ${{ inputs.quality_mix_env }}
@@ -348,10 +354,11 @@ jobs:
       - resolve-platform
       - release-validation
       - compile
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@410854ddd3173779056b274040bb8a58ca5ffb97 # v5.2.1
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@e05dabcf9ad4c54a03663517222a7c944a5e48bf
     permissions:
       contents: read
     with:
+      runner: ${{ inputs.runner }}
       otp_versions: ${{ inputs.otp_versions }}
       elixir_versions: ${{ inputs.elixir_versions }}
       test_matrix: ${{ inputs.test_matrix }}
@@ -374,7 +381,7 @@ jobs:
       - prepare-quality-cache
       - quality
       - test
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     steps:

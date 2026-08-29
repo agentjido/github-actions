@@ -6,6 +6,11 @@ on:
       HEX_API_KEY:
         required: false
     inputs:
+      runner:
+        description: Runner label for all quality jobs
+        required: false
+        type: string
+        default: "ubuntu-24.04"
       otp_version:
         description: OTP version
         required: false
@@ -103,7 +108,7 @@ on:
 jobs:
   release-validation:
     name: Release Validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -143,7 +148,7 @@ jobs:
   changelog-guard:
     name: Changelog Guard
     needs: release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     if: ${{ inputs.changelog_guard && github.event_name == 'pull_request' }}
     permissions:
       contents: read
@@ -186,7 +191,7 @@ jobs:
   audit:
     name: Audit
     needs: release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -233,7 +238,7 @@ jobs:
   format:
     name: Format
     needs: release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -280,7 +285,7 @@ jobs:
   credo:
     name: Credo
     needs: release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -329,7 +334,7 @@ jobs:
   dialyzer:
     name: Dialyzer
     needs: release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -379,7 +384,7 @@ jobs:
   unused-deps:
     name: Unused Deps
     needs: release-validation
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -427,7 +432,7 @@ jobs:
     name: Hex Package Dry Run
     needs: release-validation
     if: ${{ inputs.validate_hex_package }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -478,7 +483,7 @@ jobs:
     name: Docs
     needs: release-validation
     if: ${{ inputs.docs }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read

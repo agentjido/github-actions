@@ -9,6 +9,11 @@ name: Elixir Test
 on:
   workflow_call:
     inputs:
+      runner:
+        description: 'Runner label for all test jobs'
+        required: false
+        type: string
+        default: 'ubuntu-24.04'
       otp_versions:
         description: 'Legacy JSON array of OTP versions for the test matrix fallback'
         required: false
@@ -71,7 +76,7 @@ on:
 jobs:
   resolve-test-matrix:
     name: Resolve Test Matrix
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
 
     permissions:
@@ -107,7 +112,7 @@ jobs:
   test:
     name: ${{ matrix.otp }} - ${{ matrix.elixir }}
     needs: resolve-test-matrix
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
 
     permissions:
@@ -181,7 +186,7 @@ jobs:
     name: Experimental Compile
     if: ${{ inputs.experimental_compile_elixir_versions != '' && inputs.experimental_compile_elixir_versions != '[]' }}
     continue-on-error: true
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
 
     permissions:

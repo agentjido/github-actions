@@ -48,6 +48,26 @@ latest toolchains:
 - Elixir 1.19 / OTP 28
 - Elixir 1.20 / OTP 29
 
+## Runner Selection
+
+The three public workflows accept an optional `runner` string input. It
+defaults to `ubuntu-24.04`, so existing callers do not change. Set the input to
+an available runner label when a repository needs another compatible runner:
+
+```yaml
+jobs:
+  ci:
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
+    with:
+      runner: blacksmith-2vcpu-ubuntu-2404
+```
+
+`jido-ci.yml` passes the same label to all internal quality and test jobs. Set
+the input separately on the release and review callers when those workflows
+must use the same runner provider. Keep runner labels fixed in repository-owned
+workflow code. Do not take a release runner label from event data or a manual
+dispatch input.
+
 ## Version Pinning
 
 - `@v5`: Recommended for compatible automatic updates.

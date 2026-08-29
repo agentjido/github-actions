@@ -17,6 +17,17 @@ call the public workflows from this repository:
 - `agentjido/github-actions/.github/workflows/jido-release.yml@v5`
 - `agentjido/github-actions/.github/workflows/jido-review.yml@v5`
 
+## Runner Override
+
+All three public workflows accept an optional `runner` string input. The
+default is `ubuntu-24.04`. To move a package to another compatible runner, set
+the same repository-owned label under `with:` in its CI, review, and release
+caller jobs. `jido-ci.yml` passes the label to every internal quality and test
+job.
+
+Keep the label fixed in the workflow file. Do not read the release runner label
+from pull request data, other event data, or a `workflow_dispatch` input.
+
 ## What Not To Implement
 
 Do not add these files for the v5 package rollout:
