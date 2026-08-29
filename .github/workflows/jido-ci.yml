@@ -321,7 +321,7 @@ jobs:
       - release-validation
       - compile
       - prepare-quality-cache
-    uses: agentjido/github-actions/.github/workflows/elixir-quality.yml@e05dabcf9ad4c54a03663517222a7c944a5e48bf
+    uses: agentjido/github-actions/.github/workflows/elixir-quality.yml@36644d87be4f88f5376dad595b3bb0303bda8145
     permissions:
       contents: read
     secrets:
@@ -354,7 +354,7 @@ jobs:
       - resolve-platform
       - release-validation
       - compile
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@e05dabcf9ad4c54a03663517222a7c944a5e48bf
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@36644d87be4f88f5376dad595b3bb0303bda8145
     permissions:
       contents: read
     with:
