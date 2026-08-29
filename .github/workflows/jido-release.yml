@@ -6,6 +6,11 @@ on:
       HEX_API_KEY:
         required: false
     inputs:
+      runner:
+        description: Runner label for the release job
+        required: false
+        type: string
+        default: "ubuntu-24.04"
       operation:
         description: "Release operation: auto, prepare, or publish"
         required: false
@@ -120,7 +125,7 @@ on:
 jobs:
   release:
     name: Release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.staged_prepare && 90 || 25 }}
     concurrency:
       group: ${{ inputs.staged_prepare && format('release-{0}-{1}', github.repository, inputs.tag_name != '' && inputs.tag_name || github.ref_name) || format('release-{0}-{1}-{2}', github.repository, github.ref, inputs.operation) }}

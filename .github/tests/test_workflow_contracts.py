@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 RELEASE = (ROOT / ".github/workflows/jido-release.yml").read_text(encoding="utf-8")
 CI = (ROOT / ".github/workflows/jido-ci.yml").read_text(encoding="utf-8")
 QUALITY = (ROOT / ".github/workflows/elixir-quality.yml").read_text(encoding="utf-8")
+TEST = (ROOT / ".github/workflows/elixir-test.yml").read_text(encoding="utf-8")
+REVIEW = (ROOT / ".github/workflows/jido-review.yml").read_text(encoding="utf-8")
 STATE = (ROOT / ".github/scripts/release_state.py").read_text(encoding="utf-8")
 VALIDATOR = (ROOT / ".github/scripts/validate_generated_release.py").read_text(
     encoding="utf-8"
@@ -118,7 +120,7 @@ class WorkflowContractTest(unittest.TestCase):
                     self.assertIn('default: ""', block)
 
     def test_nested_ci_workflows_use_exact_remote_commits(self) -> None:
-        commit = "410854ddd3173779056b274040bb8a58ca5ffb97"
+        commit = "e05dabcf9ad4c54a03663517222a7c944a5e48bf"
         for workflow in ("elixir-quality.yml", "elixir-test.yml"):
             with self.subTest(workflow=workflow):
                 self.assertIn(
@@ -126,6 +128,29 @@ class WorkflowContractTest(unittest.TestCase):
                     CI,
                 )
         self.assertNotIn("uses: ./.github/workflows/", CI)
+
+    def test_runner_override_is_optional_and_propagated(self) -> None:
+        workflows = {
+            "ci": (CI, 5),
+            "quality": (QUALITY, 9),
+            "test": (TEST, 3),
+            "release": (RELEASE, 1),
+            "review": (REVIEW, 1),
+        }
+        for name, (workflow, job_count) in workflows.items():
+            with self.subTest(workflow=name):
+                block = input_block(workflow, "runner")
+                self.assertIn("required: false", block)
+                self.assertIn("type: string", block)
+                self.assertRegex(block, r"default: [\"']ubuntu-24\.04[\"']")
+                self.assertEqual(
+                    workflow.count("runs-on: ${{ inputs.runner }}"), job_count
+                )
+                self.assertNotIn("runs-on: ubuntu-24.04", workflow)
+
+        for job in ("quality", "test"):
+            with self.subTest(nested_job=job):
+                self.assertIn("runner: ${{ inputs.runner }}", job_block(CI, job))
 
     def test_validation_gate_uses_exact_sha_and_read_only_permissions(self) -> None:
         for workflow in (CI, QUALITY):

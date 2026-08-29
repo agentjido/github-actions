@@ -3,6 +3,11 @@ name: Jido Review
 on:
   workflow_call:
     inputs:
+      runner:
+        description: Runner label for the review job
+        required: false
+        type: string
+        default: "ubuntu-24.04"
       post_comment:
         description: Post or update a sticky PR review comment
         required: false
@@ -47,7 +52,7 @@ on:
 jobs:
   review:
     name: Jido Review
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       actions: read
