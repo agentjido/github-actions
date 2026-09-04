@@ -5,9 +5,14 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Update internal workflow pins with the related platform change. Automatic
+    # updates to this repository's own commit create repeated no-op pull requests.
+    ignore:
+      - dependency-name: "agentjido/github-actions/.github/workflows/elixir-quality.yml"
+      - dependency-name: "agentjido/github-actions/.github/workflows/elixir-test.yml"
     labels:
       - "dependencies"
       - "ci"
     commit-message:
-      prefix: "deps"
+      prefix: "ci"
       include: "scope"

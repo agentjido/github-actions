@@ -50,9 +50,9 @@ latest toolchains:
 
 ## Runner Selection
 
-The three public workflows accept an optional `runner` string input. It
-defaults to `ubuntu-24.04`, so existing callers do not change. Set the input to
-an available runner label when a repository needs another compatible runner:
+The three public workflows use GitHub-hosted `ubuntu-24.04` runners by default.
+Omit the optional `runner` input to use this default. Blacksmith is an explicit
+choice in each consumer workflow:
 
 ```yaml
 jobs:
@@ -71,12 +71,26 @@ dispatch input.
 ## Version Pinning
 
 - `@v5`: Recommended for compatible automatic updates.
-- `@v5.1.0`: Exact v5.1.0 release, fixed forever.
+- `@v5.2.5`: Current exact release, fixed forever.
 - Commit SHA: Maximum reproducibility.
 - `@main`: Development branch, not a stable production pin.
 
 These refs are git refs on this repository. They version the entire workflow
 repo, not an individual workflow file.
+
+The internal quality and test workflow calls use full commit SHAs. Update these
+pins with the related workflow change, and run the contract tests. Dependabot
+updates external actions; it ignores these two internal references to prevent
+repeated updates that contain no workflow changes.
+
+To validate this repository:
+
+```sh
+ruby -e 'require "yaml"; Dir[".github/**/*.yml"].sort.each { |path| YAML.load_file(path) }'
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+python3 -m unittest discover -s .github/tests -p 'test_*.py' -v
+git diff --check
+```
 
 ## Permissions
 

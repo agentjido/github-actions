@@ -17,13 +17,16 @@ call the public workflows from this repository:
 - `agentjido/github-actions/.github/workflows/jido-release.yml@v5`
 - `agentjido/github-actions/.github/workflows/jido-review.yml@v5`
 
+Use `@v5` for compatible automatic updates or `@v5.2.5` for the current exact
+release. Published exact version tags do not change.
+
 ## Runner Override
 
-All three public workflows accept an optional `runner` string input. The
-default is `ubuntu-24.04`. To move a package to another compatible runner, set
-the same repository-owned label under `with:` in its CI, review, and release
-caller jobs. `jido-ci.yml` passes the label to every internal quality and test
-job.
+All three public workflows use GitHub-hosted `ubuntu-24.04` runners by default.
+Omit `runner` to keep that default. To opt in to Blacksmith, set
+`runner: blacksmith-2vcpu-ubuntu-2404` under `with:` in each caller job that
+needs it. CI, review, and release make this choice separately. `jido-ci.yml`
+passes the label to every internal quality and test job.
 
 Keep the label fixed in the workflow file. Do not read the release runner label
 from pull request data, other event data, or a `workflow_dispatch` input.
@@ -522,7 +525,7 @@ Run this from the package repository before pushing the rollout branch:
 ```sh
 ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |f| YAML.load_file(f); puts f }'
 git diff --check
-go run github.com/rhysd/actionlint/cmd/actionlint@latest
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 ```
 
 Run the package checks that CI will enforce:
@@ -622,18 +625,21 @@ runs the Hex publish dry run, and does not create a real Hex release.
 
 ## Checked-Staging Rollout
 
-Use this order for the v5.2 checked-staging rollout:
+Use the published `@v5.2.5` pin when adopting checked staging. For a future
+shared workflow release:
 
-1. Review and merge the shared workflow change without moving a tag.
-2. Create the exact annotated `v5.2.0` tag on the merged shared commit.
-3. Move the floating `v5` tag to the same commit only after compatibility checks pass.
-4. Update a consumer to the exact `@v5.2.0` pin in a separate PR.
-5. Run the consumer dry proof and full CI before its first checked release.
+1. Select a new, unused exact version.
+2. Validate the shared workflow change in a consumer using its commit SHA.
+3. Review and merge the change, then require successful checks on `main`.
+4. Create an annotated exact version tag on that tested release commit.
+5. Move `v5` to the same commit only when the change is backward compatible.
+6. Update consumers that use an exact version in separate PRs. Run full CI and
+   the release dry run before their first checked release.
 
-Do not change `v5.1.4` or an older exact tag. Do not create or move `v5.2.0`
-from a feature branch.
+Do not change any published exact version tag or tag a feature branch as a
+release. Breaking changes require a new major version.
 
-## Current Rollout PRs
+## Historical Rollout PRs
 
 The first v4 package rollout used these PRs as reference implementations:
 

@@ -2,17 +2,10 @@ name: Release Self-Test
 
 on:
   pull_request:
-    paths:
-      - ".github/scripts/**"
-      - ".github/tests/**"
-      - ".github/workflows/**"
+  merge_group:
   push:
     branches:
       - main
-    paths:
-      - ".github/scripts/**"
-      - ".github/tests/**"
-      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
@@ -29,6 +22,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Validate workflow and action YAML
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -e 'require "yaml"; Dir[".github/**/*.yml"].sort.each { |path| YAML.load_file(path) }'
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
       - name: Compile release scripts
         shell: bash
