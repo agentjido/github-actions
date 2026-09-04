@@ -354,7 +354,7 @@ jobs:
       - resolve-platform
       - release-validation
       - compile
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@36644d87be4f88f5376dad595b3bb0303bda8145
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@6d63e9fe5a4f62f44fa9596b8171876bc5e3745b
     permissions:
       contents: read
     with:
