@@ -189,9 +189,11 @@ jobs:
               echo "::error::Release prepare must run from the repository default branch."
               exit 1
             fi
-            echo "tag_name=" >> "$GITHUB_OUTPUT"
-            echo "bare_version=" >> "$GITHUB_OUTPUT"
-            echo "target_branch=$prepare_branch" >> "$GITHUB_OUTPUT"
+            {
+              echo "tag_name="
+              echo "bare_version="
+              echo "target_branch=$prepare_branch"
+            } >> "$GITHUB_OUTPUT"
           fi
 
           echo "operation=$operation" >> "$GITHUB_OUTPUT"

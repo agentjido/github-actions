@@ -162,9 +162,11 @@ jobs:
             echo "::error::Unable to resolve reusable workflow repository/sha from the job context."
             exit 1
           fi
-          echo "repository=$workflow_repository" >> "$GITHUB_OUTPUT"
-          echo "ref=$workflow_sha" >> "$GITHUB_OUTPUT"
-          echo "path=.github-actions-platform" >> "$GITHUB_OUTPUT"
+          {
+            echo "repository=$workflow_repository"
+            echo "ref=$workflow_sha"
+            echo "path=.github-actions-platform"
+          } >> "$GITHUB_OUTPUT"
 
   release-validation:
     name: Release Validation

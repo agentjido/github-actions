@@ -255,15 +255,17 @@ jobs:
           EXPERIMENTAL_COMPILE_OTP_NAME: ${{ inputs.experimental_compile_otp_name }}
           EXPERIMENTAL_COMPILE_STATUS: ${{ steps.compile.outputs.status }}
         run: |
-          echo "### Experimental compile lane" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Elixir: ${{ matrix.elixir }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- OTP: ${{ matrix.otp }}" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$EXPERIMENTAL_COMPILE_OTP_NAME" ]; then
-            echo "- OTP label: $EXPERIMENTAL_COMPILE_OTP_NAME" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ "$EXPERIMENTAL_COMPILE_STATUS" = "0" ]; then
-            echo "- Result: passed" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "- Result: failed (warning only)" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo "- Blocking: no" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Experimental compile lane"
+            echo "- Elixir: ${{ matrix.elixir }}"
+            echo "- OTP: ${{ matrix.otp }}"
+            if [ -n "$EXPERIMENTAL_COMPILE_OTP_NAME" ]; then
+              echo "- OTP label: $EXPERIMENTAL_COMPILE_OTP_NAME"
+            fi
+            if [ "$EXPERIMENTAL_COMPILE_STATUS" = "0" ]; then
+              echo "- Result: passed"
+            else
+              echo "- Result: failed (warning only)"
+            fi
+            echo "- Blocking: no"
+          } >> "$GITHUB_STEP_SUMMARY"
