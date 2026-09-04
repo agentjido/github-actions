@@ -120,12 +120,31 @@ class WorkflowContractTest(unittest.TestCase):
                     self.assertIn('default: ""', block)
 
     def test_nested_ci_workflows_use_exact_remote_commits(self) -> None:
-        commit = "36644d87be4f88f5376dad595b3bb0303bda8145"
-        for workflow in ("elixir-quality.yml", "elixir-test.yml"):
+        for job, workflow in (
+            ("quality", "elixir-quality.yml"),
+            ("test", "elixir-test.yml"),
+        ):
             with self.subTest(workflow=workflow):
+                match = re.search(
+                    rf"^    uses: agentjido/github-actions/\.github/workflows/"
+                    rf"{re.escape(workflow)}@([0-9a-f]{{40}})\s*$",
+                    job_block(CI, job),
+                    re.MULTILINE,
+                )
+                self.assertIsNotNone(match, "Nested workflows must use a full commit SHA")
+                pinned = subprocess.run(
+                    ["git", "show", f"{match.group(1)}:.github/workflows/{workflow}"],
+                    cwd=ROOT,
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                ).stdout
+                runner = input_block(pinned, "runner")
+                self.assertIn("required: false", runner)
+                self.assertIn("type: string", runner)
+                self.assertRegex(runner, r"default: [\"']ubuntu-24\.04[\"']")
                 self.assertIn(
-                    f"uses: agentjido/github-actions/.github/workflows/{workflow}@{commit}",
-                    CI,
+                    "runner: ${{ inputs.runner }}", job_block(CI, job)
                 )
         self.assertNotIn("uses: ./.github/workflows/", CI)
 
