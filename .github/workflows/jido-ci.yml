@@ -162,9 +162,11 @@ jobs:
             echo "::error::Unable to resolve reusable workflow repository/sha from the job context."
             exit 1
           fi
-          echo "repository=$workflow_repository" >> "$GITHUB_OUTPUT"
-          echo "ref=$workflow_sha" >> "$GITHUB_OUTPUT"
-          echo "path=.github-actions-platform" >> "$GITHUB_OUTPUT"
+          {
+            echo "repository=$workflow_repository"
+            echo "ref=$workflow_sha"
+            echo "path=.github-actions-platform"
+          } >> "$GITHUB_OUTPUT"
 
   release-validation:
     name: Release Validation
@@ -354,7 +356,7 @@ jobs:
       - resolve-platform
       - release-validation
       - compile
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@36644d87be4f88f5376dad595b3bb0303bda8145
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@6d63e9fe5a4f62f44fa9596b8171876bc5e3745b
     permissions:
       contents: read
     with:
