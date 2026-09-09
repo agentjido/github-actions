@@ -534,12 +534,31 @@ class ReleaseStateTest(unittest.TestCase):
             release_state.cmd_stage(self.state_args(owner=True))
         self.assertIsNone(self.remote_ref("refs/heads/release/gitops/1.1.0"))
 
-    def test_non_default_branch_is_refused_before_staging(self) -> None:
+    def test_configured_non_default_release_branch_is_promoted(self) -> None:
+        command(
+            "git",
+            "push",
+            "origin",
+            f"{self.fixture.parent}:refs/heads/release/v2",
+            cwd=self.fixture.work,
+        )
         arguments = self.prepare_args()
-        arguments.target_branch = "feature-release"
-        with self.assertRaises(release_state.ReleaseError):
-            release_state.cmd_prepare(arguments)
-        self.assertFalse(self.manifest.exists())
+        arguments.target_branch = "release/v2"
+        release_state.cmd_prepare(arguments)
+        manifest = release_state.read_manifest(self.manifest)
+        self.required_checks_identity = manifest["required_checks_sha256"]
+        self.release_policy_identity = manifest["release_policy_sha256"]
+        self.assertEqual(manifest["target_branch"], "release/v2")
+        self.assertEqual(manifest["default_branch"], "main")
+        self.stage()
+        self.dispatch_and_validate()
+        release_state.cmd_promote(self.state_args())
+        self.assertEqual(
+            self.remote_ref("refs/heads/release/v2"), self.fixture.release
+        )
+        self.assertEqual(self.remote_ref("refs/heads/main"), self.fixture.parent)
+        release_state.cmd_dispatch_publish(self.state_args())
+        self.assertEqual(self.github.dispatches[-1][1], "release/v2")
         self.assertIsNone(self.remote_ref("refs/heads/release/gitops/1.1.0"))
 
     def test_same_name_job_from_another_run_cannot_satisfy_policy(self) -> None:

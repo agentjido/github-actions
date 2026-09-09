@@ -259,6 +259,8 @@ jobs:
       hex_dry_run: ${{ inputs.hex_dry_run || false }}
       skip_tests: ${{ inputs.skip_tests || false }}
       version_override: ${{ inputs.version_override || '' }}
+      release_branch: ""
+      release_tag_scope: reachable
       staged_prepare: ${{ inputs.staged_prepare || false }}
       staging_branch_prefix: ${{ inputs.staging_branch_prefix || 'release/gitops/' }}
     secrets:
@@ -293,6 +295,13 @@ Use `dry_run: true` with `operation: prepare` for the safe pre-release check.
 This runs preflight plus release preparation logic and does not push a commit,
 tag, GitHub release, or Hex package.
 
+The default `release_tag_scope: reachable` setting makes the release planner
+see only tags that are ancestors of the exact release parent. The workflow
+removes other tag refs only from the local runner checkout. It does not change
+remote tags. This supports divergent major streams that use the same `v*` tag
+namespace. Use `all` only when a custom release command must inspect tags from
+other streams.
+
 For packages with no existing `v*` release tag, the shared release workflow
 treats `operation: prepare` as an initial release. A dry run reports the initial
 tag it would create. A real prepare creates the initial `vVERSION` tag from the
@@ -323,6 +332,8 @@ the release job:
 ```yaml
     with:
       staged_prepare: ${{ inputs.staged_prepare || false }}
+      release_branch: ""
+      release_tag_scope: reachable
       validation_workflow: ci.yml
       required_checks: >-
         ["CI / Summary"]
@@ -332,6 +343,12 @@ the release job:
       staging_branch_prefix: ${{ inputs.staging_branch_prefix || 'release/gitops/' }}
       validation_timeout_seconds: 2700
 ```
+
+Keep `release_branch` fixed in the caller. An empty value selects the repository
+default branch. For a v2 maintenance stream, use a fixed value such as
+`release/v2` in that stream's trusted caller. The workflow requires the event
+ref and SHA to match the current remote head of this branch. Publish recovery
+also requires the release tag commit to be reachable from this branch.
 
 List each job that must have literal `success` in the dispatched validation
 run. Use the exact job name. The complete validation workflow run must also
@@ -362,8 +379,8 @@ The prepare run uses these identities:
 - `V`: returned validation run ID
 - `U`: returned publish run ID
 
-Before version planning, the workflow checks `P`, the default branch, all
-branches under the owned staging prefix, and the durable state marker for `P`.
+Before version planning, the workflow checks `P`, the configured release
+branch, all branches under the owned staging prefix, and the durable state marker for `P`.
 This stops a hard-loss retry before it can call the release planner. After the
 planner derives the intended version, a second precheck validates the tag and
 ref syntax and refuses the exact `B`, remote tag, or state marker before GitOps
@@ -388,9 +405,10 @@ publish dispatch. Nested annotated tags and mismatched internal names stop
 before staging.
 
 After the full run and configured jobs succeed on `R`, the workflow rechecks
-the repository default branch, `P`, `B`, tag absence, the exact run attempt,
-the jobs, and the fixed policy. It atomically fast-forwards the default branch
-to `R`, pushes the existing local tag ref at `A`, and moves `B` from `R` back
+the repository default-branch identity, the configured release branch at `P`,
+`B`, tag absence, the exact run attempt, the jobs, and the fixed policy. It
+atomically fast-forwards the configured release branch to `R`, pushes the
+existing local tag ref at `A`, and moves `B` from `R` back
 to `P`. This real ref update keeps `B` in the receive-pack transaction while
 GitHub evaluates protection. Exact leases protect all three refs. A narrow,
 bounded retry handles only GitHub's temporary required-check propagation
@@ -437,11 +455,11 @@ retried in the same run. Start publish-only recovery only after you check the
 external Hex and GitHub state.
 
 In checked mode, the release job validates its source before checkout or Mix
-execution. Prepare accepts only the current default-branch SHA. Publish accepts
-only an existing annotated version tag whose peeled commit is reachable from
-the current default branch. A feature branch, stale branch SHA, lightweight
-tag, unrelated tag, or unreachable tag stops before release code, write API
-calls, or secret-dependent steps. Direct mode keeps the earlier branch,
+execution. Prepare accepts only the current configured release-branch SHA.
+Publish accepts only an existing annotated version tag whose peeled commit is
+reachable from the configured release branch. An unconfigured branch, stale
+branch SHA, lightweight tag, unrelated tag, or unreachable tag stops before
+release code, write API calls, or secret-dependent steps. Direct mode keeps the earlier branch,
 lightweight initial tag, Hex upload, and GitHub release edit behavior when
 `staged_prepare` is `false`.
 

@@ -119,14 +119,14 @@ flow.
 
 Checked staging uses this fixed state flow:
 
-1. Require the current repository default branch. Before version planning, refuse any owned-prefix staging branch or durable state for the exact parent. After planning, refuse the exact tag and staging branch again before GitOps generation.
+1. Require the exact head of the configured release branch. The default is the repository default branch. Before version planning, refuse any owned-prefix staging branch or durable state for the exact parent. After planning, refuse the exact tag and staging branch again before GitOps generation.
 2. Record the exact parent, one generated commit, one annotated tag object that directly names and targets that commit, and the fixed validation policy.
 3. Save a private manifest and Git bundle.
 4. Push only `release/gitops/VERSION`, or the configured prefix, at the exact generated commit. Explicit push options prevent automatic tag following. Cleanup ownership starts only after the server response reports that this run created the new branch.
 5. Dispatch the configured validation workflow and record its returned run ID and first attempt.
 6. Require the complete run and each configured job from that exact run attempt to report literal `success` on the generated commit.
-7. Recheck the default branch, target parent, staging branch, tag absence, run, jobs, and fixed policy.
-8. In one atomic push, fast-forward the default branch, push the existing annotated tag, and move the validated staging branch back to the recorded parent. Exact leases protect all three refs. A narrow retry handles only GitHub's temporary required-check propagation response and repeats all state and validation checks.
+7. Recheck the repository default-branch identity, target parent, staging branch, tag absence, run, jobs, and fixed policy.
+8. In one atomic push, fast-forward the configured release branch, push the existing annotated tag, and move the validated staging branch back to the recorded parent. Exact leases protect all three refs. A narrow retry handles only GitHub's temporary required-check propagation response and repeats all state and validation checks.
 9. Verify the remote tag object and peeled commit, record successful promotion, and delete the staging branch with a separate exact lease. A changed or uncertain branch is never deleted. Then dispatch publish once.
 
 The validation caller must use `workflow_dispatch`, accept only the
@@ -164,9 +164,18 @@ It stops if a GitHub release exists while the Hex version is absent.
 
 Direct mode keeps the earlier prepare, branch, lightweight initial tag, Hex
 upload, and GitHub release edit behavior when `staged_prepare` is `false`. The
-default-branch and annotated-tag trust gates apply only to checked mode. Enable
+release-branch and annotated-tag trust gates apply only to checked mode. Enable
 checked mode when the protected promotion and trusted validation boundary are
 required.
+
+Parallel major release streams use two controls. Set `release_branch` to a
+fixed branch such as `release/v2` in the caller for a checked maintenance
+stream. Leave it empty for the default branch. Release planning uses
+`release_tag_scope: reachable` by default. The job removes only local tag refs
+that are not ancestors of the exact release parent before it runs GitOps. It
+does not delete remote tags. This prevents a v3 tag on a divergent branch from
+becoming the v2 release baseline. Set `release_tag_scope: all` only when a
+custom release command must inspect tags from other branch streams.
 
 Release preflight also checks Jido ecosystem dependency freshness with
 `mix hex.outdated --all`. Only Hex packages named `jido` or `jido_*` are

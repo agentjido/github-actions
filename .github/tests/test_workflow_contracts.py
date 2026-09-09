@@ -82,6 +82,8 @@ def executable_body(workflow: str, name: str, **replacements: str) -> str:
 class WorkflowContractTest(unittest.TestCase):
     def test_checked_release_inputs_and_backward_compatible_default(self) -> None:
         expected = {
+            "release_branch": ("string", '""'),
+            "release_tag_scope": ("string", '"reachable"'),
             "staged_prepare": ("boolean", "false"),
             "validation_workflow": ("string", '"ci.yml"'),
             "required_checks": ("string", '"[]"'),
@@ -291,14 +293,14 @@ class WorkflowContractTest(unittest.TestCase):
         )
         self.assertIn("generated_release_command does not match", VALIDATOR)
 
-    def test_default_branch_and_annotated_tag_gate_precedes_checkout(self) -> None:
+    def test_release_branch_and_annotated_tag_gate_precedes_checkout(self) -> None:
         gate = step_block(RELEASE, "Validate trusted release ref before checkout")
         self.assertIn("inputs.staged_prepare == true", gate)
         self.assertIn("current_default_branch", gate)
         self.assertIn('repos/$GITHUB_REPOSITORY" --jq \'.default_branch\'', gate)
-        self.assertIn('GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH', gate)
+        self.assertIn('GITHUB_REF" != "refs/heads/$TARGET_BRANCH', gate)
         self.assertIn('select(.object.type == "tag")', gate)
-        self.assertIn("compare/${release_sha}...${default_sha}", gate)
+        self.assertIn("compare/${release_sha}...${target_sha}", gate)
         self.assertLess(RELEASE.index(gate), RELEASE.index("Checkout code"))
         self.assertIn("git commit --allow-empty", RELEASE)
         self.assertIn('git tag "$release_tag"', RELEASE)
@@ -307,6 +309,145 @@ class WorkflowContractTest(unittest.TestCase):
         )
         self.assertIn("steps.mode.outputs.operation == 'publish'", publish_recheck)
         self.assertIn("inputs.staged_prepare == true", publish_recheck)
+
+    def test_release_tag_scope_handles_parallel_major_streams(self) -> None:
+        scope = executable_body(RELEASE, "Scope release tags to branch ancestry")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main"], cwd=root, check=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Fixture"], cwd=root, check=True
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "fixture@example.com"],
+                cwd=root,
+                check=True,
+            )
+            fixture = root / "fixture.txt"
+            fixture.write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "fixture.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "chore: base"], cwd=root, check=True)
+            subprocess.run(["git", "tag", "v2.0.0"], cwd=root, check=True)
+            subprocess.run(["git", "switch", "-c", "release/v3"], cwd=root, check=True)
+            fixture.write_text("v3\n", encoding="utf-8")
+            subprocess.run(["git", "commit", "-am", "feat: v3"], cwd=root, check=True)
+            v3_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.strip()
+            subprocess.run(["git", "tag", "v3.0.0-beta.1"], cwd=root, check=True)
+            subprocess.run(["git", "switch", "main"], cwd=root, check=True)
+            fixture.write_text("v2 fix\n", encoding="utf-8")
+            subprocess.run(["git", "commit", "-am", "fix: v2"], cwd=root, check=True)
+            v2_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.strip()
+            subprocess.run(["git", "tag", "v2.0.1"], cwd=root, check=True)
+
+            subprocess.run(
+                ["bash", "-c", scope],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RELEASE_PARENT": v2_sha,
+                    "RELEASE_TAG_SCOPE": "reachable",
+                },
+                check=True,
+            )
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "tag", "--list"],
+                    cwd=root,
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                ).stdout.split(),
+                ["v2.0.0", "v2.0.1"],
+            )
+
+            subprocess.run(
+                ["git", "tag", "v3.0.0-beta.1", v3_sha], cwd=root, check=True
+            )
+            subprocess.run(["git", "switch", "release/v3"], cwd=root, check=True)
+            subprocess.run(
+                ["bash", "-c", scope],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RELEASE_PARENT": v3_sha,
+                    "RELEASE_TAG_SCOPE": "reachable",
+                },
+                check=True,
+            )
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "tag", "--list"],
+                    cwd=root,
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                ).stdout.split(),
+                ["v2.0.0", "v3.0.0-beta.1"],
+            )
+
+            subprocess.run(["git", "tag", "v2.0.1", v2_sha], cwd=root, check=True)
+            subprocess.run(
+                ["bash", "-c", scope],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RELEASE_PARENT": v3_sha,
+                    "RELEASE_TAG_SCOPE": "all",
+                },
+                check=True,
+            )
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "tag", "--list"],
+                    cwd=root,
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                ).stdout.split(),
+                ["v2.0.0", "v2.0.1", "v3.0.0-beta.1"],
+            )
+
+    def test_checked_release_branch_is_explicit_and_defaults_to_main(self) -> None:
+        mode = executable_body(RELEASE, "Resolve release operation")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            environment = {
+                **os.environ,
+                "GITHUB_OUTPUT": output.as_posix(),
+                "GITHUB_REF": "refs/heads/release/v2",
+                "OPERATION_INPUT": "prepare",
+                "TAG_NAME_INPUT": "",
+                "DEFAULT_BRANCH": "main",
+                "RELEASE_BRANCH_INPUT": "release/v2",
+                "STAGED_PREPARE": "true",
+            }
+            subprocess.run(
+                ["bash", "-c", mode], cwd=root, env=environment, check=True
+            )
+            self.assertIn("target_branch=release/v2", output.read_text())
+
+            refused = subprocess.run(
+                ["bash", "-c", mode],
+                cwd=root,
+                env={**environment, "RELEASE_BRANCH_INPUT": ""},
+                check=False,
+            )
+            self.assertNotEqual(refused.returncode, 0)
 
     def test_direct_mode_keeps_base_publish_commands(self) -> None:
         names = (
@@ -468,6 +609,7 @@ class WorkflowContractTest(unittest.TestCase):
                     "OPERATION_INPUT": "prepare",
                     "TAG_NAME_INPUT": "",
                     "DEFAULT_BRANCH": "main",
+                    "RELEASE_BRANCH_INPUT": "",
                     "STAGED_PREPARE": "false",
                 },
                 check=True,
@@ -555,11 +697,14 @@ class WorkflowContractTest(unittest.TestCase):
                     "OPERATION_INPUT": "publish",
                     "TAG_NAME_INPUT": "v1.0.0",
                     "DEFAULT_BRANCH": "main",
+                    "RELEASE_BRANCH_INPUT": "",
                     "STAGED_PREPARE": "false",
                 },
                 check=True,
             )
-            self.assertIn("target_branch=\n", publish_mode_output.read_text())
+            self.assertIn(
+                "target_branch=feature-release", publish_mode_output.read_text()
+            )
             trusted_gate = step_block(
                 RELEASE, "Validate trusted release ref before checkout"
             )
@@ -738,6 +883,7 @@ class WorkflowContractTest(unittest.TestCase):
                 GITHUB_OUTPUT=(root / "output").as_posix(),
                 GITHUB_REPOSITORY="owner/repo",
                 DEFAULT_BRANCH="main",
+                TARGET_BRANCH="main",
             )
 
             feature = subprocess.run(
