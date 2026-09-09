@@ -71,7 +71,7 @@ dispatch input.
 ## Version Pinning
 
 - `@v5`: Recommended for compatible automatic updates.
-- `@v5.2.5`: Current exact release, fixed forever.
+- `@v5.2.6`: Current exact release, fixed forever.
 - Commit SHA: Maximum reproducibility.
 - `@main`: Development branch, not a stable production pin.
 

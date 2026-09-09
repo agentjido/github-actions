@@ -17,7 +17,7 @@ call the public workflows from this repository:
 - `agentjido/github-actions/.github/workflows/jido-release.yml@v5`
 - `agentjido/github-actions/.github/workflows/jido-review.yml@v5`
 
-Use `@v5` for compatible automatic updates or `@v5.2.5` for the current exact
+Use `@v5` for compatible automatic updates or `@v5.2.6` for the current exact
 release. Published exact version tags do not change.
 
 ## Runner Override
@@ -643,7 +643,7 @@ runs the Hex publish dry run, and does not create a real Hex release.
 
 ## Checked-Staging Rollout
 
-Use the published `@v5.2.5` pin when adopting checked staging. For a future
+Use the published `@v5.2.6` pin when adopting checked staging. For a future
 shared workflow release:
 
 1. Select a new, unused exact version.
