@@ -183,17 +183,14 @@ jobs:
               echo "::error::Publish requires a v-prefixed SemVer tag from github.ref or inputs.tag_name."
               exit 1
             fi
-            echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
-            echo "bare_version=${tag_name#v}" >> "$GITHUB_OUTPUT"
+            bare_version="${tag_name#v}"
           else
             if [[ "$GITHUB_REF" != refs/heads/* ]]; then
               echo "::error::Prepare must run from a branch ref."
               exit 1
             fi
-            {
-              echo "tag_name="
-              echo "bare_version="
-            } >> "$GITHUB_OUTPUT"
+            tag_name=""
+            bare_version=""
           fi
 
           if [ -n "$RELEASE_BRANCH_INPUT" ]; then
@@ -214,9 +211,13 @@ jobs:
             exit 1
           fi
 
-          echo "operation=$operation" >> "$GITHUB_OUTPUT"
-          echo "default_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "target_branch=$target_branch" >> "$GITHUB_OUTPUT"
+          {
+            echo "operation=$operation"
+            echo "tag_name=$tag_name"
+            echo "bare_version=$bare_version"
+            echo "default_branch=$DEFAULT_BRANCH"
+            echo "target_branch=$target_branch"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Validate release notes mode
         shell: bash
