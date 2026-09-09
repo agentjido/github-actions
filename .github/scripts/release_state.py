@@ -260,10 +260,12 @@ def read_manifest(
         fail(f"Cannot read release manifest {path}: {error}")
     if manifest.get("schema") != 1:
         fail("Release manifest has an unsupported schema.")
-    target_branch = require_branch(manifest.get("target_branch", ""), "Target branch")
-    default_branch = require_branch(manifest.get("default_branch", ""), "Default branch")
-    if target_branch != default_branch:
-        fail("Checked staging can promote only the recorded repository default branch.")
+    manifest["target_branch"] = require_branch(
+        manifest.get("target_branch", ""), "Target branch"
+    )
+    manifest["default_branch"] = require_branch(
+        manifest.get("default_branch", ""), "Default branch"
+    )
     required_checks = parse_required_checks(json.dumps(manifest.get("required_checks")))
     recorded_identity = require_sha256(
         manifest.get("required_checks_sha256", ""), "required_checks_sha256"
@@ -678,7 +680,7 @@ def assert_prepare_absent(
     artifact_name: str,
 ) -> None:
     if remote_ref(remote, f"refs/heads/{target_branch}") != parent_sha:
-        fail("The remote default branch is not the exact release parent.")
+        fail("The remote target branch is not the exact release parent.")
     if remote_ref(remote, f"refs/heads/{staging_branch_name}") is not None:
         fail("The deterministic staging branch already exists. Refusing repeated prepare.")
     tag_object, tag_peeled = remote_tag(remote, tag)
@@ -696,8 +698,6 @@ def cmd_precheck_parent(args: argparse.Namespace) -> None:
     repository = require_repository(args.repository)
     target = require_branch(args.target_branch, "Target branch")
     default_branch = require_branch(args.default_branch, "Default branch")
-    if target != default_branch:
-        fail("Checked staging must prepare the repository default branch.")
     parent = require_sha(args.parent, "Parent")
     prefix_probe = staging_branch(args.staging_prefix, "v0.0.0")
     branch_prefix = prefix_probe.removesuffix("0.0.0")
@@ -705,7 +705,7 @@ def cmd_precheck_parent(args: argparse.Namespace) -> None:
     if github.default_branch() != default_branch:
         fail("Trusted event metadata does not match the repository default branch.")
     if remote_ref(args.remote, f"refs/heads/{target}") != parent:
-        fail("The remote default branch is not the exact release parent.")
+        fail("The remote target branch is not the exact release parent.")
     staged = run(
         [
             "git",
@@ -730,8 +730,6 @@ def cmd_precheck(args: argparse.Namespace) -> None:
     repository = require_repository(args.repository)
     target = require_branch(args.target_branch, "Target branch")
     default_branch = require_branch(args.default_branch, "Default branch")
-    if target != default_branch:
-        fail("Checked staging must prepare the repository default branch.")
     tag = require_tag(args.tag)
     parent = require_sha(args.parent, "Parent")
     branch = staging_branch(args.staging_prefix, tag)
@@ -757,8 +755,6 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     repository = require_repository(args.repository)
     target = require_branch(args.target_branch, "Target branch")
     default_branch = require_branch(args.default_branch, "Default branch")
-    if target != default_branch:
-        fail("Checked staging must prepare the repository default branch.")
     tag = require_tag(args.tag)
     parent = require_sha(args.parent, "Parent")
     release = require_sha(git("rev-parse", "HEAD"), "Release commit")
@@ -1157,7 +1153,10 @@ def cmd_promote(args: argparse.Namespace) -> None:
             )
             time.sleep(PROMOTION_RETRY_SECONDS)
             continue
-        fail(f"Atomic promotion was rejected; main, tag, and staging are unchanged: {detail}")
+        fail(
+            "Atomic promotion was rejected; the target branch, tag, and staging "
+            f"branch are unchanged: {detail}"
+        )
 
     if remote_ref(remote, target_ref) != manifest["release_sha"]:
         fail("Promotion did not move the target branch to the release commit.")

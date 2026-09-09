@@ -46,6 +46,16 @@ on:
         required: false
         type: string
         default: ""
+      release_branch:
+        description: Trusted checked-release branch; defaults to the repository default branch
+        required: false
+        type: string
+        default: ""
+      release_tag_scope:
+        description: "Tags visible during release planning: reachable or all"
+        required: false
+        type: string
+        default: "reachable"
       preflight_command:
         description: Command run before release preparation or publishing
         required: false
@@ -141,6 +151,7 @@ jobs:
           OPERATION_INPUT: ${{ inputs.operation }}
           TAG_NAME_INPUT: ${{ inputs.tag_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_BRANCH_INPUT: ${{ inputs.release_branch }}
           STAGED_PREPARE: ${{ inputs.staged_prepare }}
         run: |
           set -euo pipefail
@@ -174,30 +185,38 @@ jobs:
             fi
             echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
             echo "bare_version=${tag_name#v}" >> "$GITHUB_OUTPUT"
-            if [ "$STAGED_PREPARE" = "true" ]; then
-              echo "target_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
-            else
-              echo "target_branch=" >> "$GITHUB_OUTPUT"
-            fi
           else
             if [[ "$GITHUB_REF" != refs/heads/* ]]; then
               echo "::error::Prepare must run from a branch ref."
               exit 1
             fi
-            prepare_branch="${GITHUB_REF#refs/heads/}"
-            if [ "$STAGED_PREPARE" = "true" ] && [ "$prepare_branch" != "$DEFAULT_BRANCH" ]; then
-              echo "::error::Release prepare must run from the repository default branch."
-              exit 1
-            fi
             {
               echo "tag_name="
               echo "bare_version="
-              echo "target_branch=$prepare_branch"
             } >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$RELEASE_BRANCH_INPUT" ]; then
+            target_branch="$RELEASE_BRANCH_INPUT"
+          elif [ "$STAGED_PREPARE" = "true" ]; then
+            target_branch="$DEFAULT_BRANCH"
+          elif [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            target_branch="${GITHUB_REF#refs/heads/}"
+          else
+            target_branch="$DEFAULT_BRANCH"
+          fi
+          if [ -z "$target_branch" ] || ! git check-ref-format "refs/heads/$target_branch" >/dev/null 2>&1; then
+            echo "::error::release_branch must be a valid branch name."
+            exit 1
+          fi
+          if [ "$operation" = "prepare" ] && [ "$GITHUB_REF" != "refs/heads/$target_branch" ]; then
+            echo "::error::Prepare must run from the configured release branch: $target_branch"
+            exit 1
           fi
 
           echo "operation=$operation" >> "$GITHUB_OUTPUT"
           echo "default_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "target_branch=$target_branch" >> "$GITHUB_OUTPUT"
 
       - name: Validate release notes mode
         shell: bash
@@ -222,6 +241,7 @@ jobs:
           RELEASE_OPERATION: ${{ steps.mode.outputs.operation }}
           RELEASE_TAG: ${{ steps.mode.outputs.tag_name }}
           DEFAULT_BRANCH: ${{ steps.mode.outputs.default_branch }}
+          TARGET_BRANCH: ${{ steps.mode.outputs.target_branch }}
         run: |
           set -euo pipefail
           if [ -z "$DEFAULT_BRANCH" ]; then
@@ -245,21 +265,29 @@ jobs:
           fi
           echo "default_sha=$default_sha" >> "$GITHUB_OUTPUT"
 
+          target_ref="$(gh api --method GET "repos/$GITHUB_REPOSITORY/git/ref/heads/$TARGET_BRANCH")"
+          target_sha="$(jq -er '.object.sha' <<< "$target_ref")"
+          if [[ ! "$target_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Repository metadata returned an invalid release-branch SHA."
+            exit 1
+          fi
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+
           if [ "$RELEASE_OPERATION" = "prepare" ]; then
-            if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ] || [ "$GITHUB_SHA" != "$default_sha" ]; then
-              echo "::error::Prepare ref is not the current repository default branch."
+            if [ "$GITHUB_REF" != "refs/heads/$TARGET_BRANCH" ] || [ "$GITHUB_SHA" != "$target_sha" ]; then
+              echo "::error::Prepare ref is not the current configured release branch."
               exit 1
             fi
             exit 0
           fi
 
-          if [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
-            if [ "$GITHUB_SHA" != "$default_sha" ]; then
-              echo "::error::Publish source is a stale default-branch revision."
+          if [ "$GITHUB_REF" = "refs/heads/$TARGET_BRANCH" ]; then
+            if [ "$GITHUB_SHA" != "$target_sha" ]; then
+              echo "::error::Publish source is a stale release-branch revision."
               exit 1
             fi
           elif [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
-            echo "::error::Publish source must be the current default branch or the exact release tag."
+            echo "::error::Publish source must be the current configured release branch or the exact release tag."
             exit 1
           fi
 
@@ -278,13 +306,13 @@ jobs:
           fi
 
           compare_status="$(
-            gh api --method GET "repos/$GITHUB_REPOSITORY/compare/${release_sha}...${default_sha}" \
+            gh api --method GET "repos/$GITHUB_REPOSITORY/compare/${release_sha}...${target_sha}" \
               --jq '.status'
           )"
           case "$compare_status" in
             ahead|identical) ;;
             *)
-              echo "::error::The release tag commit is not reachable from the current default branch."
+              echo "::error::The release tag commit is not reachable from the configured release branch."
               exit 1
               ;;
           esac
@@ -325,13 +353,13 @@ jobs:
         env:
           RELEASE_OPERATION: ${{ steps.mode.outputs.operation }}
           RELEASE_TAG: ${{ steps.mode.outputs.tag_name }}
-          EXPECTED_DEFAULT_SHA: ${{ steps.trusted-ref.outputs.default_sha }}
+          EXPECTED_TARGET_SHA: ${{ steps.trusted-ref.outputs.target_sha }}
           EXPECTED_TAG_OBJECT_SHA: ${{ steps.trusted-ref.outputs.tag_object_sha }}
           EXPECTED_RELEASE_SHA: ${{ steps.trusted-ref.outputs.release_sha }}
         run: |
           set -euo pipefail
           if [ "$RELEASE_OPERATION" = "prepare" ]; then
-            test "$(git rev-parse HEAD)" = "$EXPECTED_DEFAULT_SHA"
+            test "$(git rev-parse HEAD)" = "$EXPECTED_TARGET_SHA"
             exit 0
           fi
           test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
@@ -378,6 +406,34 @@ jobs:
         id: release-parent
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Scope release tags to branch ancestry
+        if: ${{ steps.mode.outputs.operation == 'prepare' }}
+        shell: bash
+        env:
+          RELEASE_PARENT: ${{ steps.release-parent.outputs.sha }}
+          RELEASE_TAG_SCOPE: ${{ inputs.release_tag_scope }}
+        run: |
+          set -euo pipefail
+
+          case "$RELEASE_TAG_SCOPE" in
+            all)
+              echo "All fetched tags are available to the release planner."
+              exit 0
+              ;;
+            reachable) ;;
+            *)
+              echo "::error::Unsupported release_tag_scope: $RELEASE_TAG_SCOPE"
+              exit 1
+              ;;
+          esac
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            git update-ref -d "refs/tags/$tag"
+            echo "Hid non-reachable tag from release planning: $tag"
+          done < <(git tag --no-merged "$RELEASE_PARENT")
+          echo "Release planning can see only tags reachable from $RELEASE_PARENT."
 
       - name: Setup Beam
         uses: ./.github-actions-platform/.github/actions/setup-beam
