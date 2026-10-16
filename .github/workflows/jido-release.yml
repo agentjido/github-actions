@@ -828,7 +828,7 @@ jobs:
 
       - name: Preserve private checked-release state before staging
         if: ${{ steps.mode.outputs.operation == 'prepare' && steps.checked-state.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.checked-state.outputs.artifact_name }}
           path: ${{ steps.checked-state.outputs.state_dir }}
@@ -872,7 +872,7 @@ jobs:
 
       - name: Preserve validation dispatch record
         if: ${{ steps.validation-dispatch.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: checked-release-${{ steps.prepared-version.outputs.version }}-validation-${{ steps.validation-dispatch.outputs.validation_run_id }}
           path: ${{ steps.checked-state.outputs.state_dir }}
@@ -930,7 +930,7 @@ jobs:
 
       - name: Preserve promotion and publish dispatch record
         if: ${{ steps.publish-dispatch.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: checked-release-${{ steps.prepared-version.outputs.version }}-promoted-${{ steps.publish-dispatch.outputs.publish_run_id }}
           path: ${{ steps.checked-state.outputs.state_dir }}
